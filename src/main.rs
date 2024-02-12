@@ -1,17 +1,21 @@
 use core::slice;
 use std::ffi::{c_uint, c_void, CStr};
+use std::mem::MaybeUninit;
 use std::path::{Path, PathBuf};
 use std::ptr::null;
 use std::sync::mpsc::Receiver;
 use std::sync::Mutex;
 use std::time::Duration;
-use std::{fs, iter, mem};
+use std::{fs, iter, mem, thread, vec};
 
 use anyhow::{bail, Context, Result};
 use clap::Parser;
 use libloading::Library;
-use libretro_sys::{CoreAPI, GameInfo, PixelFormat, Variable};
+use libretro_sys::{
+    CoreAPI, GameGeometry, GameInfo, PixelFormat, SystemAvInfo, SystemTiming, Variable,
+};
 use minifb::{Key, Window, WindowOptions};
+use rodio::Source;
 
 use crate::environment::Environment;
 use crate::environment_command::EnvironmentCommand;
@@ -20,8 +24,8 @@ mod environment;
 mod environment_command;
 
 const EXPECTED_LIB_RETRO_VERSION: u32 = 1;
-const WIDTH: usize = 1280 / 2;
-const HEIGHT: usize = 800 / 2;
+const WIDTH: usize = 160 * 4;
+const HEIGHT: usize = 144 * 4;
 
 static ENVIRONMENT: Mutex<Option<Environment>> = Mutex::new(None);
 
@@ -44,12 +48,89 @@ fn main() -> Result<()> {
 }
 
 fn run(core: impl AsRef<Path>, rom: impl AsRef<Path>) -> Result<()> {
-    let (core_api, frame_rx) = unsafe { load_core(core, rom).context("failed to load core")? };
+    let (_stream, stream_handle) = rodio::OutputStream::try_default()?;
+
+    let (core_api, frame_rx, audio_rx) =
+        unsafe { load_core(core, rom).context("failed to load core")? };
+
+    struct RetroAudio {
+        rx: Receiver<Vec<i16>>,
+        current_frame: vec::IntoIter<i16>,
+        sample_rate: u32,
+    }
+
+    impl rodio::Source for RetroAudio {
+        fn current_frame_len(&self) -> Option<usize> {
+            None
+        }
+
+        fn channels(&self) -> u16 {
+            2
+        }
+
+        fn sample_rate(&self) -> u32 {
+            self.sample_rate
+        }
+
+        fn total_duration(&self) -> Option<Duration> {
+            None
+        }
+    }
+
+    let mut system_av_info = SystemAvInfo {
+        geometry: GameGeometry {
+            aspect_ratio: f32::NAN,
+            base_width: 0,
+            base_height: 0,
+            max_width: 0,
+            max_height: 0,
+        },
+        timing: SystemTiming {
+            fps: 0.,
+            sample_rate: 0.,
+        },
+    };
+
+    unsafe {
+        (core_api.retro_get_system_av_info)(&mut system_av_info);
+    }
+
+    println!("{:#?}", system_av_info);
+    // panic!("sample rate: {}", system_av_info.timing.sample_rate);
+
+    let retro_audio = RetroAudio {
+        rx: audio_rx,
+        current_frame: Vec::new().into_iter(),
+        sample_rate: system_av_info.timing.sample_rate as u32,
+    };
+
+    thread::spawn(move || {
+        stream_handle
+            .play_raw(retro_audio.convert_samples())
+            .context("failed to play stream")
+            .unwrap();
+    });
+
+    println!("POST");
+
+    impl Iterator for RetroAudio {
+        type Item = i16;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            match self.current_frame.next() {
+                Some(sample) => Some(sample),
+                None => {
+                    self.current_frame = self.rx.recv().unwrap().into_iter();
+                    self.current_frame.next()
+                }
+            }
+        }
+    }
 
     let mut window = Window::new("APE", WIDTH, HEIGHT, WindowOptions::default())
         .context("failed to open window")?;
 
-    window.limit_update_rate(Some(Duration::from_secs(1) / 60));
+    window.limit_update_rate(Some(Duration::from_secs(1) / 61));
 
     while window.is_open() && !window.is_key_down(Key::Escape) {
         // for key in window.get_keys() {
@@ -65,7 +146,7 @@ fn run(core: impl AsRef<Path>, rom: impl AsRef<Path>) -> Result<()> {
         unsafe { (core_api.retro_run)() };
 
         if let Ok(frame) = frame_rx.recv_timeout(Duration::from_secs(1) / 60) {
-            eprintln!("Updating window with buffer");
+            // eprintln!("Updating window with buffer");
             let buffer = frame
                 .buffer
                 .chunks_exact(4)
@@ -91,8 +172,8 @@ fn run(core: impl AsRef<Path>, rom: impl AsRef<Path>) -> Result<()> {
 unsafe fn load_core(
     path: impl AsRef<Path>,
     rom: impl AsRef<Path>,
-) -> Result<(CoreAPI, Receiver<Frame>)> {
-    let (env, frame_rx) = Environment::new();
+) -> Result<(CoreAPI, Receiver<Frame>, Receiver<Vec<i16>>)> {
+    let (env, frame_rx, audio_rx) = Environment::new();
 
     env.register()?;
 
@@ -186,7 +267,7 @@ unsafe fn load_core(
 
     // mem::forget(lib);
 
-    Ok((core_api, frame_rx))
+    Ok((core_api, frame_rx, audio_rx))
 }
 
 unsafe extern "C" fn environment_cb(command: u32, data: *mut c_void) -> bool {
@@ -267,7 +348,7 @@ unsafe extern "C" fn environment_cb(command: u32, data: *mut c_void) -> bool {
             true
         }
         _ => {
-            eprintln!("Unhandled retro_set_environment command `{command:?}`");
+            // eprintln!("Unhandled retro_set_environment command `{command:?}`");
             false
         }
     }
@@ -279,7 +360,7 @@ unsafe extern "C" fn video_refresh_cb(
     height: c_uint,
     pitch: usize,
 ) {
-    eprintln!("In video refresh cb!");
+    // eprintln!("In video refresh cb!");
 
     if data.is_null() {
         return;
@@ -320,7 +401,7 @@ unsafe extern "C" fn video_refresh_cb(
 }
 
 unsafe extern "C" fn audio_sample_cb(left: i16, right: i16) {
-    eprintln!("In audio sample cb!");
+    eprintln!("BAD: In audio sample cb!");
 }
 
 struct Frame {
@@ -331,11 +412,32 @@ struct Frame {
 }
 
 unsafe extern "C" fn audio_sample_batch_cb(data: *const i16, frames: usize) -> usize {
-    1
+    let mut env = match ENVIRONMENT.try_lock() {
+        Ok(env) => env,
+        Err(err) => {
+            eprintln!("BUG: failed to lock env: {err}");
+            return 1;
+        }
+    };
+
+    let Some(env) = &mut *env else {
+        eprintln!("BUG: video_refresh cb called without an existing env");
+        return 1;
+    };
+
+    // println!("in audio sample batch cb ({frames} frames)");
+
+    let sample = slice::from_raw_parts(data, frames * 2).to_vec();
+
+    // println!("{sample:#?}");
+
+    env.send_audio(sample);
+
+    frames
 }
 
 unsafe extern "C" fn input_poll_cb() {
-    eprintln!("In input poll cb!");
+    // eprintln!("In input poll cb!");
 }
 
 unsafe extern "C" fn input_state_cb(
@@ -344,7 +446,7 @@ unsafe extern "C" fn input_state_cb(
     index: c_uint,
     id: c_uint,
 ) -> i16 {
-    eprintln!("In input state cb!");
+    // eprintln!("In input state cb!");
 
     0
 }

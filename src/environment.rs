@@ -11,19 +11,22 @@ use crate::Frame;
 pub struct Environment {
     variables: IndexMap<String, Variable>,
     pixel_format: PixelFormat,
-    frame_sender: SyncSender<Frame>,
+    frame_tx: SyncSender<Frame>,
+    audio_tx: SyncSender<Vec<i16>>,
 }
 
 impl Environment {
-    pub fn new() -> (Self, Receiver<Frame>) {
-        let (tx, rx) = mpsc::sync_channel(1);
+    pub fn new() -> (Self, Receiver<Frame>, Receiver<Vec<i16>>) {
+        let (frame_tx, frame_rx) = mpsc::sync_channel(1);
+        let (audio_tx, audio_rx) = mpsc::sync_channel(1);
         let this = Self {
             pixel_format: PixelFormat::ARGB1555,
             variables: IndexMap::new(),
-            frame_sender: tx,
+            frame_tx,
+            audio_tx,
         };
 
-        (this, rx)
+        (this, frame_rx, audio_rx)
     }
 
     pub fn pixel_format(&self) -> &PixelFormat {
@@ -89,9 +92,13 @@ impl Environment {
     }
 
     pub(crate) fn send_frame(&self, frame: Frame) {
-        if self.frame_sender.try_send(frame).is_err() {
+        if self.frame_tx.try_send(frame).is_err() {
             eprintln!("Dropping frame, failed to send");
         }
+    }
+
+    pub(crate) fn send_audio(&self, sample: Vec<i16>) {
+        self.audio_tx.send(sample).ok();
     }
 }
 
