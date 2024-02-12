@@ -27,6 +27,7 @@ impl Environment {
     pub fn new(gilrs: Gilrs) -> (Self, Receiver<Frame>, Receiver<Vec<i16>>) {
         let (frame_tx, frame_rx) = mpsc::sync_channel(1);
         let (audio_tx, audio_rx) = mpsc::sync_channel(1);
+
         let this = Self {
             pixel_format: PixelFormat::ARGB1555,
             variables: IndexMap::new(),
@@ -97,6 +98,16 @@ impl Environment {
             .map_err(|err| anyhow!("BUG: failed to lock env while registering new env: {err}"))?;
 
         *env = Some(self);
+
+        Ok(())
+    }
+
+    pub fn unregister() -> Result<()> {
+        let mut env = super::ENVIRONMENT
+            .lock()
+            .map_err(|err| anyhow!("BUG: failed to lock env while unregistering env: {err}"))?;
+
+        *env = None;
 
         Ok(())
     }

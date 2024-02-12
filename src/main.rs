@@ -106,10 +106,13 @@ fn run(core: impl AsRef<Path>, rom: impl AsRef<Path>) -> Result<()> {
     };
 
     thread::spawn(move || {
-        stream_handle
+        let res = stream_handle
             .play_raw(retro_audio.convert_samples())
-            .context("failed to play stream")
-            .unwrap();
+            .context("failed to play stream");
+
+        if let Err(err) = res {
+            eprintln!("Error while playing audio: {err}");
+        }
     });
 
     println!("POST");
@@ -121,7 +124,13 @@ fn run(core: impl AsRef<Path>, rom: impl AsRef<Path>) -> Result<()> {
             match self.current_frame.next() {
                 Some(sample) => Some(sample),
                 None => {
-                    self.current_frame = self.rx.recv().unwrap().into_iter();
+                    self.current_frame = match self.rx.recv() {
+                        Ok(current_frame) => current_frame.into_iter(),
+                        Err(err) => {
+                            eprintln!("Failed to receive audio frames: {err}");
+                            return None;
+                        }
+                    };
                     self.current_frame.next()
                 }
             }
@@ -166,6 +175,16 @@ fn run(core: impl AsRef<Path>, rom: impl AsRef<Path>) -> Result<()> {
 
         // window.update()
     }
+
+    unsafe {
+        (core_api.retro_unload_game)();
+        (core_api.retro_deinit)();
+        Environment::unregister()?;
+    }
+
+    println!("dropping _stream");
+    drop(_stream);
+    println!("dropped _stream");
 
     Ok(())
 }
