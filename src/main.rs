@@ -1,6 +1,5 @@
 use core::slice;
 use std::ffi::{c_uint, c_void, CStr};
-use std::mem::MaybeUninit;
 use std::path::{Path, PathBuf};
 use std::ptr::null;
 use std::sync::mpsc::Receiver;
@@ -8,11 +7,13 @@ use std::sync::Mutex;
 use std::time::Duration;
 use std::{fs, iter, mem, thread, vec};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use clap::Parser;
+use gilrs::Gilrs;
 use libloading::Library;
 use libretro_sys::{
     CoreAPI, GameGeometry, GameInfo, PixelFormat, SystemAvInfo, SystemTiming, Variable,
+    DEVICE_JOYPAD,
 };
 use minifb::{Key, Window, WindowOptions};
 use rodio::Source;
@@ -173,7 +174,10 @@ unsafe fn load_core(
     path: impl AsRef<Path>,
     rom: impl AsRef<Path>,
 ) -> Result<(CoreAPI, Receiver<Frame>, Receiver<Vec<i16>>)> {
-    let (env, frame_rx, audio_rx) = Environment::new();
+    let gilrs = Gilrs::new()
+        .map_err(|err| anyhow!("{err}"))
+        .context("failed to initialize gilrs")?;
+    let (env, frame_rx, audio_rx) = Environment::new(gilrs);
 
     env.register()?;
 
@@ -186,8 +190,6 @@ unsafe fn load_core(
     }
 
     let lib = Library::new(path.as_ref()).context("failed to load core")?;
-    // TODO: manage library lifetime
-    let lib = Box::leak(Box::new(lib));
     let core_api = CoreAPI {
         retro_set_environment: load(&lib, "retro_set_environment")?,
         retro_set_video_refresh: load(&lib, "retro_set_video_refresh")?,
@@ -265,13 +267,14 @@ unsafe fn load_core(
         }
     }
 
-    // mem::forget(lib);
+    // TODO: manage library lifetime
+    mem::forget(lib);
 
     Ok((core_api, frame_rx, audio_rx))
 }
 
 unsafe extern "C" fn environment_cb(command: u32, data: *mut c_void) -> bool {
-    let mut env = match ENVIRONMENT.try_lock() {
+    let mut env = match ENVIRONMENT.lock() {
         Ok(env) => env,
         Err(err) => {
             eprintln!("BUG: failed to lock env: {err}");
@@ -366,7 +369,7 @@ unsafe extern "C" fn video_refresh_cb(
         return;
     }
 
-    let mut env = match ENVIRONMENT.try_lock() {
+    let mut env = match ENVIRONMENT.lock() {
         Ok(env) => env,
         Err(err) => {
             eprintln!("BUG: failed to lock env: {err}");
@@ -412,7 +415,7 @@ struct Frame {
 }
 
 unsafe extern "C" fn audio_sample_batch_cb(data: *const i16, frames: usize) -> usize {
-    let mut env = match ENVIRONMENT.try_lock() {
+    let mut env = match ENVIRONMENT.lock() {
         Ok(env) => env,
         Err(err) => {
             eprintln!("BUG: failed to lock env: {err}");
@@ -421,7 +424,7 @@ unsafe extern "C" fn audio_sample_batch_cb(data: *const i16, frames: usize) -> u
     };
 
     let Some(env) = &mut *env else {
-        eprintln!("BUG: video_refresh cb called without an existing env");
+        eprintln!("BUG: audio_sample_batch cb called without an existing env");
         return 1;
     };
 
@@ -437,7 +440,20 @@ unsafe extern "C" fn audio_sample_batch_cb(data: *const i16, frames: usize) -> u
 }
 
 unsafe extern "C" fn input_poll_cb() {
-    // eprintln!("In input poll cb!");
+    let mut env = match ENVIRONMENT.lock() {
+        Ok(env) => env,
+        Err(err) => {
+            eprintln!("BUG: failed to lock env: {err}");
+            return;
+        }
+    };
+
+    let Some(env) = &mut *env else {
+        eprintln!("BUG: input_state cb called without an existing env");
+        return;
+    };
+
+    env.poll_input()
 }
 
 unsafe extern "C" fn input_state_cb(
@@ -446,7 +462,22 @@ unsafe extern "C" fn input_state_cb(
     index: c_uint,
     id: c_uint,
 ) -> i16 {
-    // eprintln!("In input state cb!");
+    if device != DEVICE_JOYPAD || port != 0 || index != 0 {
+        return 0;
+    }
 
-    0
+    let mut env = match ENVIRONMENT.lock() {
+        Ok(env) => env,
+        Err(err) => {
+            eprintln!("BUG: failed to lock env: {err}");
+            return 0;
+        }
+    };
+
+    let Some(env) = &mut *env else {
+        eprintln!("BUG: input_state cb called without an existing env");
+        return 0;
+    };
+
+    env.input_state(port, device, index, id) & (1 << id)
 }
