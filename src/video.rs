@@ -38,7 +38,7 @@ impl Frame {
         match self.pixel_format {
             PixelFormat::ARGB1555 => todo!(),
             PixelFormat::ARGB8888 => self.argb8888_buffer_to_packed_argb32(),
-            PixelFormat::RGB565 => todo!(),
+            PixelFormat::RGB565 => self.rgb565_buffer_to_packed_argb32(),
         }
     }
 
@@ -52,6 +52,33 @@ impl Frame {
             .copied()
             .tuples()
             .map(|(b, g, r, a)| (a as u32) << 24 | (r as u32) << 16 | (g as u32) << 8 | (b as u32))
+            .collect_vec()
+    }
+
+    fn rgb565_buffer_to_packed_argb32(&self) -> Vec<u32> {
+        let bytes_per_pixel = 2;
+        let bytes_per_row = bytes_per_pixel * self.width;
+        let max_r = (2u8.pow(5) - 1) as f32;
+        let max_g = (2u8.pow(6) - 1) as f32;
+        let max_b = (2u8.pow(5) - 1) as f32;
+
+        self.buffer
+            .chunks_exact(self.pitch)
+            .flat_map(|row| &row[..bytes_per_row])
+            .copied()
+            .tuples()
+            .map(|(low, high)| {
+                let pixel = (high as u16) << 8 | low as u16;
+                let r = pixel >> 11;
+                let r = ((r as f32 / max_r) * 255.).round() as u8;
+                let g = (pixel >> 5) & 0b111111;
+                let g = ((g as f32 / max_g) * 255.).round() as u8;
+                let b = pixel & 0b11111;
+                let b = ((b as f32 / max_b) * 255.).round() as u8;
+
+                (r, g, b)
+            })
+            .map(|(r, g, b)| (r as u32) << 16 | (g as u32) << 8 | (b as u32))
             .collect_vec()
     }
 }

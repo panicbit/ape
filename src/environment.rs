@@ -51,6 +51,11 @@ impl Environment {
                 self.pixel_format = pixel_format;
                 true
             }
+            PixelFormat::RGB565 => {
+                eprintln!("Using pixel format `RGB565`");
+                self.pixel_format = pixel_format;
+                true
+            }
             _ => {
                 eprintln!("Core requested unsupported pixel format `{pixel_format:?}`");
                 false

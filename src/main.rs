@@ -399,16 +399,6 @@ unsafe extern "C" fn video_refresh_cb(
         return;
     };
 
-    if *env.pixel_format() != PixelFormat::ARGB8888 {
-        eprintln!("Unimplemented pixel format {:?}", env.pixel_format());
-        return;
-    }
-
-    if pitch as u32 != (4 * width) {
-        eprintln!("Unsupported pitch `{pitch}` (width = {width}, height = {height})");
-        return;
-    }
-
     let pixel_format = *env.pixel_format();
     let frame = Frame::from_raw(data, width, height, pitch, pixel_format);
 
