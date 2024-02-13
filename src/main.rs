@@ -173,7 +173,7 @@ fn run(core: impl AsRef<Path>, rom: impl AsRef<Path>) -> Result<()> {
             );
 
             window
-                .update_with_buffer(&buffer, frame.width, frame.height)
+                .update_with_buffer(&buffer, current_frame.width, current_frame.height)
                 .context("failed to update window with buffer")?;
         }
 
