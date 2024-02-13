@@ -139,6 +139,7 @@ fn run(core: impl AsRef<Path>, rom: impl AsRef<Path>) -> Result<()> {
 
     let window_options = WindowOptions {
         resize: true,
+        scale_mode: minifb::ScaleMode::AspectRatioStretch,
         ..Default::default()
     };
 
