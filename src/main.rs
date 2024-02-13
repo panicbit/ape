@@ -27,8 +27,6 @@ mod environment_command;
 mod video;
 
 const EXPECTED_LIB_RETRO_VERSION: u32 = 1;
-const WIDTH: usize = 160 * 3;
-const HEIGHT: usize = 144 * 3;
 
 static ENVIRONMENT: Mutex<Option<Environment>> = Mutex::new(None);
 
@@ -144,8 +142,11 @@ fn run(core: impl AsRef<Path>, rom: impl AsRef<Path>) -> Result<()> {
         ..Default::default()
     };
 
-    let mut window =
-        Window::new("APE", WIDTH, HEIGHT, window_options).context("failed to open window")?;
+    let scale = 3;
+    let window_width = system_av_info.geometry.base_width as usize * scale;
+    let window_height = system_av_info.geometry.base_height as usize * scale;
+    let mut window = Window::new("APE", window_width, window_height, window_options)
+        .context("failed to open window")?;
 
     window.limit_update_rate(Some(Duration::from_secs(1) / 61));
 
