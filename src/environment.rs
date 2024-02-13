@@ -17,14 +17,14 @@ use crate::Frame;
 pub struct Environment {
     variables: IndexMap<String, Variable>,
     pixel_format: PixelFormat,
-    frame_tx: SyncSender<Frame>,
+    frame_tx: SyncSender<Option<Frame>>,
     audio_tx: SyncSender<Vec<i16>>,
     gilrs: Gilrs,
     input_state: i16,
 }
 
 impl Environment {
-    pub fn new(gilrs: Gilrs) -> (Self, Receiver<Frame>, Receiver<Vec<i16>>) {
+    pub fn new(gilrs: Gilrs) -> (Self, Receiver<Option<Frame>>, Receiver<Vec<i16>>) {
         let (frame_tx, frame_rx) = mpsc::sync_channel(1);
         let (audio_tx, audio_rx) = mpsc::sync_channel(1);
 
@@ -117,8 +117,8 @@ impl Environment {
         Ok(())
     }
 
-    pub(crate) fn send_frame(&self, frame: Frame) {
-        if self.frame_tx.try_send(frame).is_err() {
+    pub(crate) fn send_frame(&self, frame: impl Into<Option<Frame>>) {
+        if self.frame_tx.try_send(frame.into()).is_err() {
             eprintln!("Dropping frame, failed to send");
         }
     }

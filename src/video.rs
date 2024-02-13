@@ -13,6 +13,16 @@ pub struct Frame {
 }
 
 impl Frame {
+    pub fn empty() -> Self {
+        Self {
+            buffer: Vec::new(),
+            width: 0,
+            height: 0,
+            pitch: 0,
+            pixel_format: PixelFormat::ARGB8888,
+        }
+    }
+
     pub unsafe fn from_raw(
         data: *const c_void,
         width: c_uint,

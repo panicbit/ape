@@ -144,6 +144,8 @@ fn run(core: impl AsRef<Path>, rom: impl AsRef<Path>) -> Result<()> {
 
     window.limit_update_rate(Some(Duration::from_secs(1) / 61));
 
+    let mut current_frame = Frame::empty();
+
     while window.is_open() && !window.is_key_down(Key::Escape) {
         // for key in window.get_keys() {
         //     match key {
@@ -158,7 +160,11 @@ fn run(core: impl AsRef<Path>, rom: impl AsRef<Path>) -> Result<()> {
         unsafe { (core_api.retro_run)() };
 
         if let Ok(frame) = frame_rx.recv_timeout(Duration::from_secs(1) / 60) {
-            let buffer = frame.buffer_to_packed_argb32();
+            if let Some(frame) = frame {
+                current_frame = frame;
+            }
+
+            let buffer = current_frame.buffer_to_packed_argb32();
 
             println!(
                 "buffer length: {} ({} bytes)",
@@ -190,7 +196,7 @@ fn run(core: impl AsRef<Path>, rom: impl AsRef<Path>) -> Result<()> {
 unsafe fn load_core(
     path: impl AsRef<Path>,
     rom: impl AsRef<Path>,
-) -> Result<(CoreAPI, Receiver<Frame>, Receiver<Vec<i16>>)> {
+) -> Result<(CoreAPI, Receiver<Option<Frame>>, Receiver<Vec<i16>>)> {
     let gilrs = Gilrs::new()
         .map_err(|err| anyhow!("{err}"))
         .context("failed to initialize gilrs")?;
@@ -318,6 +324,13 @@ unsafe extern "C" fn environment_cb(command: u32, data: *mut c_void) -> bool {
             };
 
             env.set_pixel_format(pixel_format)
+        }
+        EnvironmentCommand::GET_CAN_DUPE => {
+            if !data.is_null() {
+                *data.cast::<bool>() = true;
+            }
+
+            true
         }
         EnvironmentCommand::SET_VARIABLES => {
             let mut variables = data.cast_const().cast::<Variable>();
