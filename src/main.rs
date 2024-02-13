@@ -20,9 +20,11 @@ use rodio::Source;
 
 use crate::environment::Environment;
 use crate::environment_command::EnvironmentCommand;
+use crate::video::Frame;
 
 mod environment;
 mod environment_command;
+mod video;
 
 const EXPECTED_LIB_RETRO_VERSION: u32 = 1;
 const WIDTH: usize = 160 * 4;
@@ -156,17 +158,13 @@ fn run(core: impl AsRef<Path>, rom: impl AsRef<Path>) -> Result<()> {
         unsafe { (core_api.retro_run)() };
 
         if let Ok(frame) = frame_rx.recv_timeout(Duration::from_secs(1) / 60) {
-            // eprintln!("Updating window with buffer");
-            let buffer = frame
-                .buffer
-                .chunks_exact(4)
-                .map(|chunk| {
-                    (chunk[3] as u32) << 24
-                        | (chunk[2] as u32) << 16
-                        | (chunk[1] as u32) << 8
-                        | (chunk[0] as u32)
-                })
-                .collect::<Vec<u32>>();
+            let buffer = frame.buffer_to_packed_argb32();
+
+            println!(
+                "buffer length: {} ({} bytes)",
+                buffer.len(),
+                buffer.len() * 4
+            );
 
             window
                 .update_with_buffer(&buffer, frame.width, frame.height)
@@ -411,26 +409,14 @@ unsafe extern "C" fn video_refresh_cb(
         return;
     }
 
-    let buffer = slice::from_raw_parts(data.cast::<u8>(), (4 * width * height) as usize).to_owned();
-    let frame = Frame {
-        buffer,
-        width: width as usize,
-        height: height as usize,
-        pitch,
-    };
+    let pixel_format = *env.pixel_format();
+    let frame = Frame::from_raw(data, width, height, pitch, pixel_format);
 
     env.send_frame(frame);
 }
 
 unsafe extern "C" fn audio_sample_cb(left: i16, right: i16) {
     eprintln!("BAD: In audio sample cb!");
-}
-
-struct Frame {
-    pub buffer: Vec<u8>,
-    pub width: usize,
-    pub height: usize,
-    pub pitch: usize,
 }
 
 unsafe extern "C" fn audio_sample_batch_cb(data: *const i16, frames: usize) -> usize {

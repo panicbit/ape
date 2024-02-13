@@ -16,8 +16,8 @@ clap = { version = "4.5.0", features = [
 ] }
 dotenv = "0.15.0"
 gilrs = { version = "0.10.4" }
-image = "0.24.8"
 indexmap = "2.2.3"
+itertools = "0.12.1"
 libloading = "0.8.1"
 libretro-sys = "0.1.1"
 minifb = "0.25.0"
