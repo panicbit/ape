@@ -56,6 +56,7 @@ impl Frame {
         let bytes_per_pixel = 4;
         let bytes_per_row = bytes_per_pixel * self.width;
 
+        // TODO: properly handle *native* endianness
         self.buffer
             .chunks_exact(self.pitch)
             .flat_map(|row| &row[..bytes_per_row])
@@ -72,6 +73,7 @@ impl Frame {
         let max_g = (2u8.pow(6) - 1) as f32;
         let max_b = (2u8.pow(5) - 1) as f32;
 
+        // TODO: properly handle *native* endianness
         self.buffer
             .chunks_exact(self.pitch)
             .flat_map(|row| &row[..bytes_per_row])
