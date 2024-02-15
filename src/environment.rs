@@ -1,5 +1,7 @@
 use std::borrow::Cow;
-use std::ffi::{c_uint, CString};
+use std::ffi::{c_uint, c_void, CStr, CString};
+use std::iter;
+use std::ptr::null;
 use std::sync::mpsc::{self, Receiver, SyncSender};
 
 use anyhow::{anyhow, Context, Result};
@@ -12,7 +14,10 @@ use libretro_sys::{
     DEVICE_ID_JOYPAD_START, DEVICE_ID_JOYPAD_UP, DEVICE_ID_JOYPAD_X, DEVICE_ID_JOYPAD_Y,
 };
 
-use crate::Frame;
+use crate::{Frame, ENVIRONMENT};
+use command::Command;
+
+mod command;
 
 pub struct Environment {
     variables: IndexMap<String, Variable>,
@@ -174,10 +179,10 @@ impl Environment {
 
     pub(crate) fn input_state(
         &self,
-        port: c_uint,
-        device: c_uint,
-        index: c_uint,
-        id: c_uint,
+        _port: c_uint,
+        _device: c_uint,
+        _index: c_uint,
+        _id: c_uint,
     ) -> i16 {
         self.input_state
     }
@@ -206,5 +211,96 @@ impl Variable {
             default,
             value,
         })
+    }
+}
+
+pub unsafe extern "C" fn environment_cb(command: u32, data: *mut c_void) -> bool {
+    let mut env = match ENVIRONMENT.lock() {
+        Ok(env) => env,
+        Err(err) => {
+            eprintln!("BUG: failed to lock env: {err}");
+            return false;
+        }
+    };
+
+    let Some(env) = &mut *env else {
+        eprintln!("BUG: environment cb called without an existing env");
+        return false;
+    };
+
+    let Some(command) = Command::from_repr(command) else {
+        eprintln!("Unknown retro_set_environment command `{command}`");
+        return false;
+    };
+
+    match command {
+        Command::SET_PIXEL_FORMAT => {
+            let pixel_format = *data.cast_const().cast::<c_uint>();
+            let Some(pixel_format) = PixelFormat::from_uint(pixel_format) else {
+                eprintln!("Unknown pixel format variant `{pixel_format}`");
+                return false;
+            };
+
+            env.set_pixel_format(pixel_format)
+        }
+        Command::GET_CAN_DUPE => {
+            if !data.is_null() {
+                *data.cast::<bool>() = true;
+            }
+
+            true
+        }
+        Command::SET_VARIABLES => {
+            let mut variables = data.cast_const().cast::<libretro_sys::Variable>();
+            let variables = iter::from_fn(|| {
+                let variable = variables.as_ref()?;
+
+                // Safety: `.as_ref()?` guarantees non-null ptr
+                let key = CStr::from_ptr(variable.key.as_ref()?);
+                let key = key.to_string_lossy();
+
+                // Safety: `.as_ref()?` guarantees non-null ptr
+                let value = CStr::from_ptr(variable.value.as_ref()?);
+                let value = value.to_string_lossy();
+
+                // Safety: valid until either `key` or `value` are null
+                variables = variables.add(1);
+
+                Some((key, value))
+            })
+            // Safety: fusing prevents iterating past sentinel variable
+            .fuse();
+
+            env.set_variables(variables)
+        }
+        Command::GET_VARIABLE => {
+            let Some(variable) = data.cast::<libretro_sys::Variable>().as_mut() else {
+                eprintln!("get_variable called with null variable");
+                return false;
+            };
+
+            let Some(key) = variable.key.as_ref() else {
+                eprintln!("get_variable called with null key");
+                return false;
+            };
+            let key = CStr::from_ptr(key).to_string_lossy();
+
+            variable.value = match env.get_variable(&key) {
+                Some(value) => {
+                    eprintln!("returning get_variable for key {key}");
+                    value.as_ptr()
+                }
+                None => {
+                    eprintln!("get_variable called with unknown key");
+                    null()
+                }
+            };
+
+            true
+        }
+        _ => {
+            // eprintln!("Unhandled retro_set_environment command `{command:?}`");
+            false
+        }
     }
 }

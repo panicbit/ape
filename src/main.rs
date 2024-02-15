@@ -1,29 +1,27 @@
 use core::slice;
-use std::ffi::{c_uint, c_void, CStr};
+use std::ffi::{c_uint, c_void};
 use std::path::{Path, PathBuf};
 use std::ptr::null;
 use std::sync::mpsc::Receiver;
 use std::sync::Mutex;
 use std::time::Duration;
-use std::{fs, iter, mem, thread, vec};
+use std::{fs, mem, thread, vec};
 
 use anyhow::{anyhow, bail, Context, Result};
 use clap::Parser;
 use gilrs::Gilrs;
 use libloading::Library;
 use libretro_sys::{
-    CoreAPI, GameGeometry, GameInfo, PixelFormat, SystemAvInfo, SystemTiming, Variable,
+    CoreAPI, GameGeometry, GameInfo, SystemAvInfo, SystemTiming,
     DEVICE_JOYPAD,
 };
 use minifb::{Key, Window, WindowOptions};
 use rodio::Source;
 
 use crate::environment::Environment;
-use crate::environment_command::EnvironmentCommand;
 use crate::video::Frame;
 
 mod environment;
-mod environment_command;
 mod video;
 
 const EXPECTED_LIB_RETRO_VERSION: u32 = 1;
@@ -173,12 +171,6 @@ fn run(core: impl AsRef<Path>, rom: impl AsRef<Path>) -> Result<()> {
 
             let buffer = current_frame.buffer_to_packed_argb32();
 
-            println!(
-                "buffer length: {} ({} bytes)",
-                buffer.len(),
-                buffer.len() * 4
-            );
-
             window
                 .update_with_buffer(&buffer, current_frame.width, current_frame.height)
                 .context("failed to update window with buffer")?;
@@ -271,7 +263,7 @@ unsafe fn load_core(
         );
     }
 
-    (core_api.retro_set_environment)(environment_cb);
+    (core_api.retro_set_environment)(environment::environment_cb);
 
     (core_api.retro_set_video_refresh)(video_refresh_cb);
     (core_api.retro_set_audio_sample)(audio_sample_cb);
@@ -301,97 +293,6 @@ unsafe fn load_core(
     mem::forget(lib);
 
     Ok((core_api, frame_rx, audio_rx))
-}
-
-unsafe extern "C" fn environment_cb(command: u32, data: *mut c_void) -> bool {
-    let mut env = match ENVIRONMENT.lock() {
-        Ok(env) => env,
-        Err(err) => {
-            eprintln!("BUG: failed to lock env: {err}");
-            return false;
-        }
-    };
-
-    let Some(env) = &mut *env else {
-        eprintln!("BUG: environment cb called without an existing env");
-        return false;
-    };
-
-    let Some(command) = EnvironmentCommand::from_repr(command) else {
-        eprintln!("Unknown retro_set_environment command `{command}`");
-        return false;
-    };
-
-    match command {
-        EnvironmentCommand::SET_PIXEL_FORMAT => {
-            let pixel_format = *data.cast_const().cast::<c_uint>();
-            let Some(pixel_format) = PixelFormat::from_uint(pixel_format) else {
-                eprintln!("Unknown pixel format variant `{pixel_format}`");
-                return false;
-            };
-
-            env.set_pixel_format(pixel_format)
-        }
-        EnvironmentCommand::GET_CAN_DUPE => {
-            if !data.is_null() {
-                *data.cast::<bool>() = true;
-            }
-
-            true
-        }
-        EnvironmentCommand::SET_VARIABLES => {
-            let mut variables = data.cast_const().cast::<Variable>();
-            let variables = iter::from_fn(|| {
-                let variable = variables.as_ref()?;
-
-                // Safety: `.as_ref()?` guarantees non-null ptr
-                let key = CStr::from_ptr(variable.key.as_ref()?);
-                let key = key.to_string_lossy();
-
-                // Safety: `.as_ref()?` guarantees non-null ptr
-                let value = CStr::from_ptr(variable.value.as_ref()?);
-                let value = value.to_string_lossy();
-
-                // Safety: valid until either `key` or `value` are null
-                variables = variables.add(1);
-
-                Some((key, value))
-            })
-            // Safety: fusing prevents iterating past sentinel variable
-            .fuse();
-
-            env.set_variables(variables)
-        }
-        EnvironmentCommand::GET_VARIABLE => {
-            let Some(variable) = data.cast::<Variable>().as_mut() else {
-                eprintln!("get_variable called with null variable");
-                return false;
-            };
-
-            let Some(key) = variable.key.as_ref() else {
-                eprintln!("get_variable called with null key");
-                return false;
-            };
-            let key = CStr::from_ptr(key).to_string_lossy();
-
-            variable.value = match env.get_variable(&key) {
-                Some(value) => {
-                    eprintln!("returning get_variable for key {key}");
-                    value.as_ptr()
-                }
-                None => {
-                    eprintln!("get_variable called with unknown key");
-                    null()
-                }
-            };
-
-            true
-        }
-        _ => {
-            // eprintln!("Unhandled retro_set_environment command `{command:?}`");
-            false
-        }
-    }
 }
 
 unsafe extern "C" fn video_refresh_cb(
@@ -425,7 +326,7 @@ unsafe extern "C" fn video_refresh_cb(
     env.send_frame(frame);
 }
 
-unsafe extern "C" fn audio_sample_cb(left: i16, right: i16) {
+unsafe extern "C" fn audio_sample_cb(_left: i16, _right: i16) {
     eprintln!("BAD: In audio sample cb!");
 }
 

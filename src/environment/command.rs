@@ -11,7 +11,7 @@ pub const ENVIRONMENT_PRIVATE: c_uint = 0x20000;
 
 #[derive(FromRepr, Debug, PartialEq)]
 #[repr(u32)]
-pub enum EnvironmentCommand {
+pub enum Command {
     // const unsigned * --
     // Sets screen rotation of graphics.
     // Is only implemented if rotation can be accelerated by hardware.
