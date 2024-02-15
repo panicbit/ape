@@ -16,17 +16,12 @@ use rodio::Source;
 
 use crate::audio::RetroAudio;
 use crate::core::{Callbacks, Core};
-use crate::environment::Environment;
 use crate::video::Frame;
 
 mod audio;
-pub mod core;
+mod core;
 mod environment;
 mod video;
-
-const EXPECTED_LIB_RETRO_VERSION: u32 = 1;
-
-static ENVIRONMENT: Mutex<Option<Environment>> = Mutex::new(None);
 
 #[derive(clap::Parser)]
 struct Cli {
