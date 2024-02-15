@@ -15,7 +15,7 @@ use libretro_sys::{
 };
 
 use crate::{Frame, ENVIRONMENT};
-use command::Command;
+pub use command::Command;
 
 mod command;
 

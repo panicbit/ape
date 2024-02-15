@@ -29,19 +29,23 @@ impl Frame {
         height: c_uint,
         pitch: usize,
         pixel_format: PixelFormat,
-    ) -> Self {
+    ) -> Option<Self> {
+        if data.is_null() {
+            return None;
+        }
+
         let width = width as usize;
         let height = height as usize;
         let size = height * pitch;
-        let buffer = slice::from_raw_parts(data.cast::<u8>(), size).to_owned();
+        let buffer = slice::from_raw_parts(data.cast::<u8>(), size).to_vec();
 
-        Self {
+        Some(Self {
             buffer,
             width,
             height,
             pitch,
             pixel_format,
-        }
+        })
     }
 
     pub fn buffer_to_packed_argb32(&self) -> Vec<u32> {

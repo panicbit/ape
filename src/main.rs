@@ -1,26 +1,29 @@
-use core::slice;
+use ::core::slice;
 use std::ffi::{c_uint, c_void};
 use std::path::{Path, PathBuf};
 use std::ptr::null;
-use std::sync::mpsc::Receiver;
+use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::sync::Mutex;
 use std::time::Duration;
 use std::{fs, mem, thread, vec};
 
 use anyhow::{anyhow, bail, Context, Result};
 use clap::Parser;
-use gilrs::Gilrs;
+use gilrs::{Button, Gilrs};
 use libloading::Library;
 use libretro_sys::{
-    CoreAPI, GameGeometry, GameInfo, SystemAvInfo, SystemTiming,
-    DEVICE_JOYPAD,
+    CoreAPI, GameGeometry, GameInfo, PixelFormat, SystemAvInfo, SystemTiming, DEVICE_JOYPAD,
 };
 use minifb::{Key, Window, WindowOptions};
 use rodio::Source;
 
+use crate::audio::RetroAudio;
+use crate::core::{Callbacks, Core};
 use crate::environment::Environment;
 use crate::video::Frame;
 
+mod audio;
+pub mod core;
 mod environment;
 mod video;
 
@@ -49,351 +52,175 @@ fn main() -> Result<()> {
 fn run(core: impl AsRef<Path>, rom: impl AsRef<Path>) -> Result<()> {
     let (_stream, stream_handle) = rodio::OutputStream::try_default()?;
 
-    let (core_api, frame_rx, audio_rx) =
-        unsafe { load_core(core, rom).context("failed to load core")? };
+    let gilrs = Gilrs::new()
+        .map_err(|err| anyhow!("{err}"))
+        .context("failed to initialize gilrs")?;
 
-    struct RetroAudio {
-        rx: Receiver<Vec<i16>>,
-        current_frame: vec::IntoIter<i16>,
-        sample_rate: u32,
-    }
+    let (frame_tx, frame_rx) = sync_channel(1);
+    let (audio_tx, audio_rx) = sync_channel(1);
 
-    impl rodio::Source for RetroAudio {
-        fn current_frame_len(&self) -> Option<usize> {
-            None
-        }
-
-        fn channels(&self) -> u16 {
-            2
-        }
-
-        fn sample_rate(&self) -> u32 {
-            self.sample_rate
-        }
-
-        fn total_duration(&self) -> Option<Duration> {
-            None
-        }
-    }
-
-    let mut system_av_info = SystemAvInfo {
-        geometry: GameGeometry {
-            aspect_ratio: f32::NAN,
-            base_width: 0,
-            base_height: 0,
-            max_width: 0,
-            max_height: 0,
-        },
-        timing: SystemTiming {
-            fps: 0.,
-            sample_rate: 0.,
-        },
+    let callbacks = ApeCallbacks {
+        frame_tx,
+        audio_tx,
+        gilrs,
+        input_state: 0,
     };
 
-    unsafe {
-        (core_api.retro_get_system_av_info)(&mut system_av_info);
-    }
-
-    println!("{:#?}", system_av_info);
-    // panic!("sample rate: {}", system_av_info.timing.sample_rate);
-
-    let retro_audio = RetroAudio {
-        rx: audio_rx,
-        current_frame: Vec::new().into_iter(),
-        sample_rate: system_av_info.timing.sample_rate as u32,
+    let core_config = core::Config {
+        core: core.as_ref().to_owned(),
+        rom: rom.as_ref().to_owned(),
+        callbacks: callbacks.boxed(),
     };
 
-    thread::spawn(move || {
-        let res = stream_handle
-            .play_raw(retro_audio.convert_samples())
-            .context("failed to play stream");
+    Core::load(core_config, |core| -> Result<()> {
+        let system_av_info = core.get_system_av_info();
 
-        if let Err(err) = res {
-            eprintln!("Error while playing audio: {err}");
-        }
-    });
+        println!("{:#?}", system_av_info);
+        // panic!("sample rate: {}", system_av_info.timing.sample_rate);
 
-    println!("POST");
+        let retro_audio = RetroAudio {
+            rx: audio_rx,
+            current_frame: Vec::new().into_iter(),
+            sample_rate: system_av_info.timing.sample_rate as u32,
+        };
 
-    impl Iterator for RetroAudio {
-        type Item = i16;
+        thread::spawn(move || {
+            let res = stream_handle
+                .play_raw(retro_audio.convert_samples())
+                .context("failed to play stream");
 
-        fn next(&mut self) -> Option<Self::Item> {
-            match self.current_frame.next() {
-                Some(sample) => Some(sample),
-                None => {
-                    self.current_frame = match self.rx.recv() {
-                        Ok(current_frame) => current_frame.into_iter(),
-                        Err(err) => {
-                            eprintln!("Failed to receive audio frames: {err}");
-                            return None;
-                        }
-                    };
-                    self.current_frame.next()
+            if let Err(err) = res {
+                eprintln!("Error while playing audio: {err}");
+            }
+        });
+
+        let window_options = WindowOptions {
+            resize: true,
+            scale_mode: minifb::ScaleMode::AspectRatioStretch,
+            ..Default::default()
+        };
+
+        let scale = 3;
+        let window_width = system_av_info.geometry.base_width as usize * scale;
+        let window_height = system_av_info.geometry.base_height as usize * scale;
+        let mut window = Window::new("APE", window_width, window_height, window_options)
+            .context("failed to open window")?;
+
+        window.limit_update_rate(Some(Duration::from_secs(1) / 61));
+
+        let mut current_frame = Frame::empty();
+
+        while window.is_open() && !window.is_key_down(Key::Escape) {
+            core.run();
+
+            if let Ok(frame) = frame_rx.recv_timeout(Duration::from_secs(1) / 60) {
+                if let Some(frame) = frame {
+                    current_frame = frame;
                 }
+
+                let buffer = current_frame.buffer_to_packed_argb32();
+
+                window
+                    .update_with_buffer(&buffer, current_frame.width, current_frame.height)
+                    .context("failed to update window with buffer")?;
             }
         }
-    }
 
-    let window_options = WindowOptions {
-        resize: true,
-        scale_mode: minifb::ScaleMode::AspectRatioStretch,
-        ..Default::default()
-    };
+        Ok(())
+    })
+    .context("failed to load core")?
+    .context("runtime error")?;
 
-    let scale = 3;
-    let window_width = system_av_info.geometry.base_width as usize * scale;
-    let window_height = system_av_info.geometry.base_height as usize * scale;
-    let mut window = Window::new("APE", window_width, window_height, window_options)
-        .context("failed to open window")?;
-
-    window.limit_update_rate(Some(Duration::from_secs(1) / 61));
-
-    let mut current_frame = Frame::empty();
-
-    while window.is_open() && !window.is_key_down(Key::Escape) {
-        // for key in window.get_keys() {
-        //     match key {
-        //         Key::Left if x > 0 => x -= 1,
-        //         Key::Right if x < WIDTH - 1 => x += 1,
-        //         Key::Up if y > 0 => y -= 1,
-        //         Key::Down if y < HEIGHT - 1 => y += 1,
-        //         _ => {}
-        //     }
-        // }
-
-        unsafe { (core_api.retro_run)() };
-
-        if let Ok(frame) = frame_rx.recv_timeout(Duration::from_secs(1) / 60) {
-            if let Some(frame) = frame {
-                current_frame = frame;
-            }
-
-            let buffer = current_frame.buffer_to_packed_argb32();
-
-            window
-                .update_with_buffer(&buffer, current_frame.width, current_frame.height)
-                .context("failed to update window with buffer")?;
-        }
-
-        // window.update()
-    }
-
-    unsafe {
-        (core_api.retro_unload_game)();
-        (core_api.retro_deinit)();
-        Environment::unregister()?;
-    }
-
-    println!("dropping _stream");
-    drop(_stream);
-    println!("dropped _stream");
+    println!("Exiting normally");
 
     Ok(())
 }
 
-unsafe fn load_core(
-    path: impl AsRef<Path>,
-    rom: impl AsRef<Path>,
-) -> Result<(CoreAPI, Receiver<Option<Frame>>, Receiver<Vec<i16>>)> {
-    let gilrs = Gilrs::new()
-        .map_err(|err| anyhow!("{err}"))
-        .context("failed to initialize gilrs")?;
-    let (env, frame_rx, audio_rx) = Environment::new(gilrs);
+struct ApeCallbacks {
+    frame_tx: SyncSender<Option<Frame>>,
+    audio_tx: SyncSender<Vec<i16>>,
+    gilrs: Gilrs,
+    input_state: i16,
+}
 
-    env.register()?;
-
-    unsafe fn load<T: Copy>(library: &Library, symbol: &str) -> Result<T> {
-        let item = library
-            .get::<T>(symbol.as_bytes())
-            .with_context(|| format!("failed to load symbol `{}` from core", symbol))?;
-
-        Ok(*item)
-    }
-
-    let lib = Library::new(path.as_ref()).context("failed to load core")?;
-    let core_api = CoreAPI {
-        retro_set_environment: load(&lib, "retro_set_environment")?,
-        retro_set_video_refresh: load(&lib, "retro_set_video_refresh")?,
-        retro_set_audio_sample: load(&lib, "retro_set_audio_sample")?,
-        retro_set_audio_sample_batch: load(&lib, "retro_set_audio_sample_batch")?,
-        retro_set_input_poll: load(&lib, "retro_set_input_poll")?,
-        retro_set_input_state: load(&lib, "retro_set_input_state")?,
-
-        retro_init: load(&lib, "retro_init")?,
-        retro_deinit: load(&lib, "retro_deinit")?,
-
-        retro_api_version: load(&lib, "retro_api_version")?,
-
-        retro_get_system_info: load(&lib, "retro_get_system_info")?,
-        retro_get_system_av_info: load(&lib, "retro_get_system_av_info")?,
-        retro_set_controller_port_device: load(&lib, "retro_set_controller_port_device")?,
-
-        retro_reset: load(&lib, "retro_reset")?,
-        retro_run: load(&lib, "retro_run")?,
-
-        retro_serialize_size: load(&lib, "retro_serialize_size")?,
-        retro_serialize: load(&lib, "retro_serialize")?,
-        retro_unserialize: load(&lib, "retro_unserialize")?,
-
-        retro_cheat_reset: load(&lib, "retro_cheat_reset")?,
-        retro_cheat_set: load(&lib, "retro_cheat_set")?,
-
-        retro_load_game: load(&lib, "retro_load_game")?,
-        retro_load_game_special: load(&lib, "retro_load_game_special")?,
-        retro_unload_game: load(&lib, "retro_unload_game")?,
-
-        retro_get_region: load(&lib, "retro_get_region")?,
-        retro_get_memory_data: load(&lib, "retro_get_memory_data")?,
-        retro_get_memory_size: load(&lib, "retro_get_memory_size")?,
-    };
-
-    // The following libretro calls must not be reordered.
-    // > Implementations are designed to be single-instance, so global state is allowed.
-    // > Should the frontend call these functions in wrong order, undefined behavior occurs.
-    // https://docs.libretro.com/development/cores/developing-cores/#implementing-the-api
-    let api_version = (core_api.retro_api_version)();
-
-    println!("Core API version: {}", api_version);
-
-    if api_version != EXPECTED_LIB_RETRO_VERSION {
-        bail!(
-            "Core was compiled against libretro version `{api_version}`, \
-                but expected version `{EXPECTED_LIB_RETRO_VERSION}`",
-        );
-    }
-
-    (core_api.retro_set_environment)(environment::environment_cb);
-
-    (core_api.retro_set_video_refresh)(video_refresh_cb);
-    (core_api.retro_set_audio_sample)(audio_sample_cb);
-    (core_api.retro_set_audio_sample_batch)(audio_sample_batch_cb);
-    (core_api.retro_set_input_poll)(input_poll_cb);
-    (core_api.retro_set_input_state)(input_state_cb);
-
-    (core_api.retro_init)();
-
-    {
-        let rom = fs::read(rom).context("Failed to read rom")?;
-        let game_info = GameInfo {
-            path: null(),
-            data: rom.as_ptr().cast(),
-            size: rom.len(),
-            meta: null(),
-        };
-
-        let load_game_successful = (core_api.retro_load_game)(&game_info);
-
-        if !load_game_successful {
-            bail!("Failed to load game");
+impl Callbacks for ApeCallbacks {
+    fn video_refresh(&mut self, frame: Option<Frame>) {
+        if self.frame_tx.try_send(frame).is_err() {
+            eprintln!("Dropping frame, failed to send");
         }
     }
 
-    // TODO: manage library lifetime
-    mem::forget(lib);
-
-    Ok((core_api, frame_rx, audio_rx))
-}
-
-unsafe extern "C" fn video_refresh_cb(
-    data: *const c_void,
-    width: c_uint,
-    height: c_uint,
-    pitch: usize,
-) {
-    // eprintln!("In video refresh cb!");
-
-    if data.is_null() {
-        return;
+    fn supports_pixel_format(&mut self, pixel_format: PixelFormat) -> bool {
+        match pixel_format {
+            PixelFormat::ARGB8888 => true,
+            PixelFormat::RGB565 => true,
+            PixelFormat::ARGB1555 => false,
+        }
     }
 
-    let mut env = match ENVIRONMENT.lock() {
-        Ok(env) => env,
-        Err(err) => {
-            eprintln!("BUG: failed to lock env: {err}");
-            return;
-        }
-    };
-
-    let Some(env) = &mut *env else {
-        eprintln!("BUG: video_refresh cb called without an existing env");
-        return;
-    };
-
-    let pixel_format = *env.pixel_format();
-    let frame = Frame::from_raw(data, width, height, pitch, pixel_format);
-
-    env.send_frame(frame);
-}
-
-unsafe extern "C" fn audio_sample_cb(_left: i16, _right: i16) {
-    eprintln!("BAD: In audio sample cb!");
-}
-
-unsafe extern "C" fn audio_sample_batch_cb(data: *const i16, frames: usize) -> usize {
-    let mut env = match ENVIRONMENT.lock() {
-        Ok(env) => env,
-        Err(err) => {
-            eprintln!("BUG: failed to lock env: {err}");
-            return 1;
-        }
-    };
-
-    let Some(env) = &mut *env else {
-        eprintln!("BUG: audio_sample_batch cb called without an existing env");
-        return 1;
-    };
-
-    // println!("in audio sample batch cb ({frames} frames)");
-
-    let sample = slice::from_raw_parts(data, frames * 2).to_vec();
-
-    // println!("{sample:#?}");
-
-    env.send_audio(sample);
-
-    frames
-}
-
-unsafe extern "C" fn input_poll_cb() {
-    let mut env = match ENVIRONMENT.lock() {
-        Ok(env) => env,
-        Err(err) => {
-            eprintln!("BUG: failed to lock env: {err}");
-            return;
-        }
-    };
-
-    let Some(env) = &mut *env else {
-        eprintln!("BUG: input_state cb called without an existing env");
-        return;
-    };
-
-    env.poll_input()
-}
-
-unsafe extern "C" fn input_state_cb(
-    port: c_uint,
-    device: c_uint,
-    index: c_uint,
-    id: c_uint,
-) -> i16 {
-    if device != DEVICE_JOYPAD || port != 0 || index != 0 {
-        return 0;
+    fn audio_sample(&mut self, left: i16, right: i16) {
+        // TODO: avoid vec, probably use enum
+        self.audio_tx.send(vec![left, right]).ok();
     }
 
-    let mut env = match ENVIRONMENT.lock() {
-        Ok(env) => env,
-        Err(err) => {
-            eprintln!("BUG: failed to lock env: {err}");
+    fn audio_samples(&mut self, samples: &[i16]) {
+        self.audio_tx.send(samples.to_vec()).ok();
+    }
+
+    fn input_poll(&mut self) {
+        while let Some(event) = self.gilrs.next_event() {
+            let mut release = false;
+            let button = match event.event {
+                gilrs::EventType::ButtonPressed(button, _) => button,
+                gilrs::EventType::ButtonReleased(button, _) => {
+                    release = true;
+                    button
+                }
+                _ => continue,
+            };
+
+            eprintln!("Pressed button {button:?}");
+
+            let button = match button {
+                Button::South => libretro_sys::DEVICE_ID_JOYPAD_B,
+                Button::East => libretro_sys::DEVICE_ID_JOYPAD_A,
+                Button::North => libretro_sys::DEVICE_ID_JOYPAD_X,
+                Button::West => libretro_sys::DEVICE_ID_JOYPAD_Y,
+                Button::C => 0,
+                Button::Z => 0,
+                Button::LeftTrigger => libretro_sys::DEVICE_ID_JOYPAD_L,
+                Button::LeftTrigger2 => libretro_sys::DEVICE_ID_JOYPAD_L2,
+                Button::RightTrigger => libretro_sys::DEVICE_ID_JOYPAD_R,
+                Button::RightTrigger2 => libretro_sys::DEVICE_ID_JOYPAD_R2,
+                Button::Select => libretro_sys::DEVICE_ID_JOYPAD_SELECT,
+                Button::Start => libretro_sys::DEVICE_ID_JOYPAD_START,
+                Button::Mode => 0,
+                Button::LeftThumb => libretro_sys::DEVICE_ID_JOYPAD_L3,
+                Button::RightThumb => libretro_sys::DEVICE_ID_JOYPAD_R3,
+                Button::DPadUp => libretro_sys::DEVICE_ID_JOYPAD_UP,
+                Button::DPadDown => libretro_sys::DEVICE_ID_JOYPAD_DOWN,
+                Button::DPadLeft => libretro_sys::DEVICE_ID_JOYPAD_LEFT,
+                Button::DPadRight => libretro_sys::DEVICE_ID_JOYPAD_RIGHT,
+                Button::Unknown => 0,
+            };
+
+            if release {
+                self.input_state &= !(1 << button);
+            } else {
+                self.input_state |= 1 << button;
+            }
+        }
+    }
+
+    fn input_state(&mut self, port: c_uint, device: c_uint, index: c_uint, id: c_uint) -> i16 {
+        if device != DEVICE_JOYPAD || port != 0 || index != 0 {
             return 0;
         }
-    };
 
-    let Some(env) = &mut *env else {
-        eprintln!("BUG: input_state cb called without an existing env");
-        return 0;
-    };
+        self.input_state & (1 << id)
+    }
 
-    env.input_state(port, device, index, id) & (1 << id)
+    fn can_dupe_frames(&mut self) -> bool {
+        true
+    }
 }
