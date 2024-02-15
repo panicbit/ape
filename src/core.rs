@@ -1,4 +1,5 @@
 use std::fs;
+use std::os::raw::c_void;
 use std::path::Path;
 use std::path::PathBuf;
 use std::ptr::null;
@@ -88,6 +89,36 @@ impl Core {
 
     pub fn run(&mut self) {
         unsafe { (self.api.retro_run)() }
+    }
+
+    pub fn state(&mut self) -> Result<Vec<u8>> {
+        unsafe {
+            let size = (self.api.retro_serialize_size)();
+            let mut state = Vec::<u8>::with_capacity(size);
+
+            let success = (self.api.retro_serialize)(state.as_mut_ptr().cast::<c_void>(), size);
+
+            if !success {
+                bail!("state serialization failed");
+            }
+
+            state.set_len(size);
+
+            Ok(state)
+        }
+    }
+
+    pub fn restore_state(&mut self, state: &[u8]) -> Result<()> {
+        unsafe {
+            let success =
+                (self.api.retro_unserialize)(state.as_ptr().cast::<c_void>(), state.len());
+
+            if !success {
+                bail!("failed to restore state");
+            }
+
+            Ok(())
+        }
     }
 }
 

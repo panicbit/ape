@@ -55,12 +55,14 @@ fn run(core: impl AsRef<Path>, rom: impl AsRef<Path>) -> Result<()> {
 
     let (frame_tx, frame_rx) = sync_channel(1);
     let (audio_tx, audio_rx) = sync_channel(1);
+    let (command_tx, command_rx) = sync_channel(32);
 
     let callbacks = ApeCallbacks {
         frame_tx,
         audio_tx,
         gilrs,
         input_state: 0,
+        command_tx,
     };
 
     let core_config = core::Config {
@@ -97,6 +99,8 @@ fn run(core: impl AsRef<Path>, rom: impl AsRef<Path>) -> Result<()> {
             ..Default::default()
         };
 
+        let mut saved_state = None;
+
         let scale = 3;
         let window_width = system_av_info.geometry.base_width as usize * scale;
         let window_height = system_av_info.geometry.base_height as usize * scale;
@@ -121,6 +125,22 @@ fn run(core: impl AsRef<Path>, rom: impl AsRef<Path>) -> Result<()> {
                     .update_with_buffer(&buffer, current_frame.width, current_frame.height)
                     .context("failed to update window with buffer")?;
             }
+
+            if let Ok(command) = command_rx.try_recv() {
+                match command {
+                    Command::SaveState => match core.state() {
+                        Ok(state) => saved_state = Some(state),
+                        Err(err) => eprintln!("{err:?}"),
+                    },
+                    Command::LoadState => {
+                        if let Some(state) = &saved_state {
+                            if let Err(err) = core.restore_state(state) {
+                                eprintln!("{err:?}")
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         Ok(())
@@ -138,6 +158,7 @@ struct ApeCallbacks {
     audio_tx: SyncSender<Vec<i16>>,
     gilrs: Gilrs,
     input_state: i16,
+    command_tx: SyncSender<Command>,
 }
 
 impl Callbacks for ApeCallbacks {
@@ -183,22 +204,30 @@ impl Callbacks for ApeCallbacks {
                 Button::East => libretro_sys::DEVICE_ID_JOYPAD_A,
                 Button::North => libretro_sys::DEVICE_ID_JOYPAD_X,
                 Button::West => libretro_sys::DEVICE_ID_JOYPAD_Y,
-                Button::C => 0,
-                Button::Z => 0,
-                Button::LeftTrigger => libretro_sys::DEVICE_ID_JOYPAD_L,
+                Button::C => continue,
+                Button::Z => continue,
+                Button::LeftTrigger => {
+                    // libretro_sys::DEVICE_ID_JOYPAD_L
+                    self.command_tx.try_send(Command::LoadState).ok();
+                    continue;
+                }
                 Button::LeftTrigger2 => libretro_sys::DEVICE_ID_JOYPAD_L2,
-                Button::RightTrigger => libretro_sys::DEVICE_ID_JOYPAD_R,
+                Button::RightTrigger => {
+                    // libretro_sys::DEVICE_ID_JOYPAD_R
+                    self.command_tx.try_send(Command::SaveState).ok();
+                    continue;
+                }
                 Button::RightTrigger2 => libretro_sys::DEVICE_ID_JOYPAD_R2,
                 Button::Select => libretro_sys::DEVICE_ID_JOYPAD_SELECT,
                 Button::Start => libretro_sys::DEVICE_ID_JOYPAD_START,
-                Button::Mode => 0,
+                Button::Mode => continue,
                 Button::LeftThumb => libretro_sys::DEVICE_ID_JOYPAD_L3,
                 Button::RightThumb => libretro_sys::DEVICE_ID_JOYPAD_R3,
                 Button::DPadUp => libretro_sys::DEVICE_ID_JOYPAD_UP,
                 Button::DPadDown => libretro_sys::DEVICE_ID_JOYPAD_DOWN,
                 Button::DPadLeft => libretro_sys::DEVICE_ID_JOYPAD_LEFT,
                 Button::DPadRight => libretro_sys::DEVICE_ID_JOYPAD_RIGHT,
-                Button::Unknown => 0,
+                Button::Unknown => continue,
             };
 
             if release {
@@ -220,4 +249,9 @@ impl Callbacks for ApeCallbacks {
     fn can_dupe_frames(&mut self) -> bool {
         true
     }
+}
+
+enum Command {
+    SaveState,
+    LoadState,
 }

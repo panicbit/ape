@@ -1,3 +1,4 @@
+use std::ffi::c_void;
 use std::ops::Deref;
 use std::path::Path;
 use std::ptr;
@@ -10,6 +11,7 @@ pub(super) struct Api {
     _library: Library,
     core_api: CoreAPI,
     _opt_out_of_send_sync: *const (),
+    pub retro_serialize: unsafe extern "C" fn(data: *mut c_void, size: usize) -> bool,
 }
 
 impl Api {}
@@ -56,10 +58,13 @@ impl Api {
             retro_get_memory_size: deref_symbol(&library, "retro_get_memory_size")?,
         };
 
+        let retro_serialize = deref_symbol(&library, "retro_serialize")?;
+
         Ok(Self {
             _library: library,
             core_api,
             _opt_out_of_send_sync: ptr::null(),
+            retro_serialize,
         })
     }
 }
