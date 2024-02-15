@@ -1,4 +1,3 @@
-use std::borrow::{Borrow, BorrowMut};
 use std::ffi::{c_uint, c_void};
 use std::slice;
 

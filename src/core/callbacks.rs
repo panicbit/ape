@@ -3,7 +3,6 @@ use std::ffi::c_uint;
 
 use libretro_sys::PixelFormat;
 
-use crate::core::state::State;
 use crate::video::Frame;
 
 pub mod ffi;
@@ -56,7 +55,7 @@ impl Callbacks for Stub {
         eprintln!("WARNING: audio_sample is stubbed");
     }
 
-    fn audio_samples(&mut self, samples: &[i16]) {
+    fn audio_samples(&mut self, _samples: &[i16]) {
         eprintln!("WARNING: audio_samples is stubbed");
     }
 

@@ -1,19 +1,16 @@
-use ::core::slice;
-use std::ffi::{c_uint, c_void};
+use std::ffi::c_uint;
 use std::path::{Path, PathBuf};
-use std::ptr::null;
-use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
+
+use std::sync::mpsc::{sync_channel, SyncSender};
 use std::sync::Mutex;
 use std::time::Duration;
-use std::{fs, mem, thread, vec};
+use std::{thread, vec};
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{anyhow, Context, Result};
 use clap::Parser;
 use gilrs::{Button, Gilrs};
-use libloading::Library;
-use libretro_sys::{
-    CoreAPI, GameGeometry, GameInfo, PixelFormat, SystemAvInfo, SystemTiming, DEVICE_JOYPAD,
-};
+
+use libretro_sys::{PixelFormat, DEVICE_JOYPAD};
 use minifb::{Key, Window, WindowOptions};
 use rodio::Source;
 
