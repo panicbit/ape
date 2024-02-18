@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use std::sync::mpsc::{sync_channel, SyncSender};
 use std::time::{Duration, Instant};
-use std::{thread, vec};
+use std::{io, thread, vec};
 
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
@@ -73,9 +73,18 @@ fn run(core: impl AsRef<Path>, rom: impl AsRef<Path>) -> Result<()> {
     let mut last_sram_save = Instant::now();
 
     Core::load(core_config, |core| -> Result<()> {
-        if let Ok(sram) = fs::read(&sram_path) {
-            eprintln!("Restoring SRAM from {sram_path:?}");
-            core.restore_save_ram(&sram);
+        match fs::read(&sram_path) {
+            Ok(sram) => {
+                eprintln!("Restoring SRAM from {sram_path:?}");
+                core.restore_save_ram(&sram);
+            }
+            Err(err) => {
+                if err.kind() == io::ErrorKind::NotFound {
+                    eprintln!("No SRAM file found at {sram_path:?}");
+                } else {
+                    eprintln!("Failed to read SRAM from {sram_path:?}");
+                }
+            }
         }
 
         let hook_host = hook::Host::new();
@@ -126,10 +135,10 @@ fn run(core: impl AsRef<Path>, rom: impl AsRef<Path>) -> Result<()> {
             core.run();
 
             if last_sram_save.elapsed() >= Duration::from_secs(5) {
-                eprintln!("Saving SRAM to {sram_path:?}");
+                // eprintln!("Saving SRAM to {sram_path:?}");
 
                 if let Err(err) = fs::write(&sram_path, core.get_save_ram()) {
-                    eprintln!("Failed to save SRAM: {err:?}");
+                    eprintln!("Failed to save SRAM to {sram_path:?}: {err:?}");
                 }
 
                 last_sram_save = Instant::now();
