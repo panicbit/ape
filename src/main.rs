@@ -1,8 +1,9 @@
 use std::ffi::c_uint;
+use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 
 use std::sync::mpsc::{sync_channel, SyncSender};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use std::{thread, vec};
 
 use anyhow::{anyhow, Context, Result};
@@ -53,6 +54,8 @@ fn run(core: impl AsRef<Path>, rom: impl AsRef<Path>) -> Result<()> {
     let (audio_tx, audio_rx) = sync_channel(1);
     let (command_tx, command_rx) = sync_channel(32);
 
+    let sram_path = rom.as_ref().with_extension("sram");
+
     let callbacks = ApeCallbacks {
         frame_tx,
         audio_tx,
@@ -67,7 +70,14 @@ fn run(core: impl AsRef<Path>, rom: impl AsRef<Path>) -> Result<()> {
         callbacks: callbacks.boxed(),
     };
 
+    let mut last_sram_save = Instant::now();
+
     Core::load(core_config, |core| -> Result<()> {
+        if let Ok(sram) = fs::read(&sram_path) {
+            eprintln!("Restoring SRAM from {sram_path:?}");
+            core.restore_save_ram(&sram);
+        }
+
         let hook_host = hook::Host::new();
 
         remote::start(hook_host.handle());
@@ -114,6 +124,16 @@ fn run(core: impl AsRef<Path>, rom: impl AsRef<Path>) -> Result<()> {
         while window.is_open() && !window.is_key_down(Key::Escape) {
             hook_host.run(core);
             core.run();
+
+            if last_sram_save.elapsed() >= Duration::from_secs(5) {
+                eprintln!("Saving SRAM to {sram_path:?}");
+
+                if let Err(err) = fs::write(&sram_path, core.get_save_ram()) {
+                    eprintln!("Failed to save SRAM: {err:?}");
+                }
+
+                last_sram_save = Instant::now();
+            }
 
             if let Ok(frame) = frame_rx.recv_timeout(Duration::from_secs(1) / 60) {
                 if let Some(frame) = frame {

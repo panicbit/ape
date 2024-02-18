@@ -1,3 +1,4 @@
+use core::slice;
 use std::borrow::Cow;
 use std::ffi::CStr;
 use std::fs;
@@ -167,6 +168,41 @@ impl Core {
 
             len
         })
+    }
+
+    pub fn get_save_ram(&self) -> &[u8] {
+        unsafe {
+            let region = libretro_sys::MEMORY_SAVE_RAM;
+            let ptr = (self.api.retro_get_memory_data)(region);
+            let len = (self.api.retro_get_memory_size)(region);
+
+            if ptr.is_null() || len == 0 {
+                return &[];
+            }
+
+            slice::from_raw_parts(ptr.cast::<u8>(), len)
+        }
+    }
+
+    pub fn get_save_ram_mut(&mut self) -> &mut [u8] {
+        unsafe {
+            let region = libretro_sys::MEMORY_SAVE_RAM;
+            let ptr = (self.api.retro_get_memory_data)(region);
+            let len = (self.api.retro_get_memory_size)(region);
+
+            if ptr.is_null() || len == 0 {
+                return &mut [];
+            }
+
+            slice::from_raw_parts_mut(ptr.cast::<u8>(), len)
+        }
+    }
+
+    pub fn restore_save_ram(&mut self, data: &[u8]) {
+        let save_ram = self.get_save_ram_mut();
+        let len = save_ram.len().min(data.len());
+
+        save_ram[..len].copy_from_slice(&data[..len]);
     }
 }
 
