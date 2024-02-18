@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+use std::ffi::CStr;
 use std::fs;
 use std::os::raw::c_void;
 use std::path::Path;
@@ -12,12 +14,17 @@ use libretro_sys::SystemAvInfo;
 use libretro_sys::SystemTiming;
 
 use self::api::Api;
-pub use self::callbacks::*;
-pub use self::state::*;
 
 mod api;
+
 mod callbacks;
+pub use callbacks::*;
+
+mod memory_map;
+pub use memory_map::*;
+
 mod state;
+pub use state::*;
 
 const EXPECTED_LIB_RETRO_VERSION: u32 = 1;
 
@@ -40,6 +47,7 @@ impl Core {
             // TODO: prevent the same core from being loaded more than once in the same process
 
             let api = Api::load(config.core)?;
+
             let mut core = Core { api };
 
             core.check_api_version_match()?;
@@ -62,6 +70,22 @@ impl Core {
             STATE.set(State::new());
 
             Ok(res)
+        }
+    }
+
+    pub fn get_system_info(&self) -> SystemInfo {
+        let mut system_info = libretro_sys::SystemInfo {
+            library_name: null(),
+            library_version: null(),
+            valid_extensions: null(),
+            need_fullpath: false,
+            block_extract: false,
+        };
+
+        unsafe {
+            (self.api.retro_get_system_info)(&mut system_info);
+
+            SystemInfo::from_raw(system_info)
         }
     }
 
@@ -120,6 +144,30 @@ impl Core {
             Ok(())
         }
     }
+
+    pub fn get_memory(&self, address: usize, max_len: usize) -> Vec<u8> {
+        STATE.with_borrow(|state| unsafe {
+            state
+                .memory_map
+                .get_slice(address, max_len)
+                .unwrap_or_default()
+                .to_vec()
+        })
+    }
+
+    pub fn write_memory(&mut self, address: usize, bytes: &[u8]) -> usize {
+        STATE.with_borrow(|state| unsafe {
+            let slice = state
+                .memory_map
+                .get_slice_mut(address, bytes.len())
+                .unwrap_or_default();
+
+            let len = slice.len().min(bytes.len());
+            slice[..len].copy_from_slice(&bytes[..len]);
+
+            len
+        })
+    }
 }
 
 impl Core {
@@ -172,4 +220,60 @@ pub struct Config {
     pub core: PathBuf,
     pub rom: PathBuf,
     pub callbacks: Box<dyn Callbacks>,
+}
+
+pub struct SystemInfo<'a> {
+    pub library_name: Cow<'a, str>,
+    pub library_version: Cow<'a, str>,
+    pub valid_extensions: Cow<'a, str>,
+    pub need_fullpath: bool,
+    pub block_extract: bool,
+    pub system_id: Option<&'static str>,
+}
+
+impl SystemInfo<'_> {
+    unsafe fn from_raw(system_info: libretro_sys::SystemInfo) -> Self {
+        let library_name = system_info
+            .library_name
+            .as_ref()
+            .map(|library_name| CStr::from_ptr(library_name).to_string_lossy())
+            .unwrap_or_default();
+        let library_version = system_info
+            .library_version
+            .as_ref()
+            .map(|library_version| CStr::from_ptr(library_version).to_string_lossy())
+            .unwrap_or_default();
+        let valid_extensions = system_info
+            .valid_extensions
+            .as_ref()
+            .map(|valid_extensions| CStr::from_ptr(valid_extensions).to_string_lossy())
+            .unwrap_or_default();
+
+        SystemInfo {
+            system_id: system_id_from_library_name(&library_name),
+            library_name,
+            library_version,
+            valid_extensions,
+            need_fullpath: system_info.need_fullpath,
+            block_extract: system_info.block_extract,
+        }
+    }
+
+    pub fn to_owned(&self) -> SystemInfo<'static> {
+        SystemInfo {
+            library_name: self.library_name.as_ref().to_owned().into(),
+            library_version: self.library_version.as_ref().to_owned().into(),
+            valid_extensions: self.valid_extensions.as_ref().to_owned().into(),
+            need_fullpath: self.need_fullpath,
+            block_extract: self.block_extract,
+            system_id: self.system_id,
+        }
+    }
+}
+
+fn system_id_from_library_name(library_name: &str) -> Option<&'static str> {
+    Some(match library_name {
+        "Gambatte" | "SameBoy" => "game_boy",
+        _ => return None,
+    })
 }

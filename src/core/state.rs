@@ -1,6 +1,9 @@
 use std::cell::RefCell;
+use std::ptr::null;
 
 use libretro_sys::PixelFormat;
+
+use crate::core::MemoryMap;
 
 thread_local! {
     pub static STATE: RefCell<State> = RefCell::new(State::new());
@@ -9,6 +12,7 @@ thread_local! {
 pub struct State {
     pub is_core_loaded: bool,
     pub pixel_format: PixelFormat,
+    pub memory_map: MemoryMap,
 }
 
 impl State {
@@ -16,6 +20,7 @@ impl State {
         Self {
             is_core_loaded: false,
             pixel_format: PixelFormat::ARGB1555,
+            memory_map: MemoryMap::empty(),
         }
     }
 }

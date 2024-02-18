@@ -3,7 +3,7 @@ use std::slice;
 
 use libretro_sys::PixelFormat;
 
-use crate::core::{CALLBACKS, STATE};
+use crate::core::{MemoryMap, CALLBACKS, STATE};
 use crate::environment::Command;
 use crate::video::Frame;
 
@@ -78,6 +78,16 @@ pub unsafe extern "C" fn environment(command: u32, data: *mut c_void) -> bool {
 
             true
         }
+        Command::SET_MEMORY_MAPS => STATE.with_borrow_mut(|state| {
+            let memory_map = data.cast::<libretro_sys::MemoryMap>();
+            let memory_map = MemoryMap::from_raw(memory_map);
+
+            println!("{memory_map:#?}");
+
+            state.memory_map = memory_map;
+
+            true
+        }),
         // Command::SET_VARIABLES => {
         //     let mut variables = data.cast_const().cast::<libretro_sys::Variable>();
         //     let variables = iter::from_fn(|| {

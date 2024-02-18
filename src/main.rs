@@ -2,7 +2,6 @@ use std::ffi::c_uint;
 use std::path::{Path, PathBuf};
 
 use std::sync::mpsc::{sync_channel, SyncSender};
-use std::sync::Mutex;
 use std::time::Duration;
 use std::{thread, vec};
 
@@ -19,8 +18,10 @@ use crate::core::{Callbacks, Core};
 use crate::video::Frame;
 
 mod audio;
-mod core;
+pub mod core;
 mod environment;
+mod hook;
+mod remote;
 mod video;
 
 #[derive(clap::Parser)]
@@ -67,6 +68,10 @@ fn run(core: impl AsRef<Path>, rom: impl AsRef<Path>) -> Result<()> {
     };
 
     Core::load(core_config, |core| -> Result<()> {
+        let hook_host = hook::Host::new();
+
+        remote::start(hook_host.handle());
+
         let system_av_info = core.get_system_av_info();
 
         println!("{:#?}", system_av_info);
@@ -107,6 +112,7 @@ fn run(core: impl AsRef<Path>, rom: impl AsRef<Path>) -> Result<()> {
         let mut current_frame = Frame::empty();
 
         while window.is_open() && !window.is_key_down(Key::Escape) {
+            hook_host.run(core);
             core.run();
 
             if let Ok(frame) = frame_rx.recv_timeout(Duration::from_secs(1) / 60) {
