@@ -227,25 +227,29 @@ impl Callbacks for ApeCallbacks {
                 _ => continue,
             };
 
-            eprintln!("Pressed button {button:?}");
+            // if release {
+            //     eprintln!("Released button {button:?}");
+            // } else {
+            //     eprintln!("Pressed button {button:?}");
+            // }
 
             let button = match button {
-                Button::South => libretro_sys::DEVICE_ID_JOYPAD_B,
-                Button::East => libretro_sys::DEVICE_ID_JOYPAD_A,
-                Button::North => libretro_sys::DEVICE_ID_JOYPAD_X,
-                Button::West => libretro_sys::DEVICE_ID_JOYPAD_Y,
+                Button::South => libretro_sys::DEVICE_ID_JOYPAD_A, // libretro_sys::DEVICE_ID_JOYPAD_B,
+                Button::West => libretro_sys::DEVICE_ID_JOYPAD_B, // libretro_sys::DEVICE_ID_JOYPAD_Y,
+                Button::East => continue, // libretro_sys::DEVICE_ID_JOYPAD_A,
+                Button::North => continue, // libretro_sys::DEVICE_ID_JOYPAD_X,
                 Button::C => continue,
                 Button::Z => continue,
                 Button::LeftTrigger => {
-                    // libretro_sys::DEVICE_ID_JOYPAD_L
-                    self.command_tx.try_send(Command::LoadState).ok();
-                    continue;
+                    libretro_sys::DEVICE_ID_JOYPAD_L
+                    // self.command_tx.try_send(Command::LoadState).ok();
+                    // continue;
                 }
                 Button::LeftTrigger2 => libretro_sys::DEVICE_ID_JOYPAD_L2,
                 Button::RightTrigger => {
-                    // libretro_sys::DEVICE_ID_JOYPAD_R
-                    self.command_tx.try_send(Command::SaveState).ok();
-                    continue;
+                    libretro_sys::DEVICE_ID_JOYPAD_R
+                    // self.command_tx.try_send(Command::SaveState).ok();
+                    // continue;
                 }
                 Button::RightTrigger2 => libretro_sys::DEVICE_ID_JOYPAD_R2,
                 Button::Select => libretro_sys::DEVICE_ID_JOYPAD_SELECT,
