@@ -4,6 +4,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use std::sync::mpsc::{sync_channel, SyncSender};
+use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 use std::{io, thread, vec};
 
@@ -73,6 +74,7 @@ fn run(core: impl AsRef<Path>, rom: impl AsRef<Path>) -> Result<()> {
     };
 
     let mut last_sram_save = Instant::now();
+    let mut speed_factor = 1;
 
     Core::load(core_config, |core| -> Result<()> {
         match fs::read(&sram_path) {
@@ -98,10 +100,14 @@ fn run(core: impl AsRef<Path>, rom: impl AsRef<Path>) -> Result<()> {
         println!("{:#?}", system_av_info);
         // panic!("sample rate: {}", system_av_info.timing.sample_rate);
 
+        let sample_rate = Arc::new(RwLock::new(
+            system_av_info.timing.sample_rate as u32 * speed_factor,
+        ));
+
         let retro_audio = RetroAudio {
             rx: audio_rx,
             current_frame: Vec::new().into_iter(),
-            sample_rate: system_av_info.timing.sample_rate as u32,
+            sample_rate: sample_rate.clone(),
         };
 
         thread::spawn(move || {
@@ -128,11 +134,11 @@ fn run(core: impl AsRef<Path>, rom: impl AsRef<Path>) -> Result<()> {
         let mut window = Window::new("APE", window_width, window_height, window_options)
             .context("failed to open window")?;
 
-        window.limit_update_rate(Some(Duration::from_secs(1) / 61));
+        window.limit_update_rate(Some(Duration::from_secs(1) / (61 * speed_factor)));
 
         let mut current_frame = Frame::empty();
 
-        while window.is_open() && !window.is_key_down(Key::Escape) {
+        while window.is_open() {
             hook_host.run(core);
             core.run();
 
@@ -168,6 +174,17 @@ fn run(core: impl AsRef<Path>, rom: impl AsRef<Path>) -> Result<()> {
                                 eprintln!("{err:?}")
                             }
                         }
+                    }
+                    Command::ToggleTurbo => {
+                        speed_factor = match speed_factor {
+                            1 => 2,
+                            _ => 1,
+                        };
+
+                        *sample_rate.write().unwrap() =
+                            system_av_info.timing.sample_rate as u32 * speed_factor;
+                        window
+                            .limit_update_rate(Some(Duration::from_secs(1) / (61 * speed_factor)));
                     }
                 }
             }
@@ -245,15 +262,16 @@ impl Callbacks for ApeCallbacks {
                 Button::C => continue,
                 Button::Z => continue,
                 Button::LeftTrigger => {
-                    libretro_sys::DEVICE_ID_JOYPAD_L
+                    // libretro_sys::DEVICE_ID_JOYPAD_L
+                    libretro_sys::DEVICE_ID_JOYPAD_X
                     // self.command_tx.try_send(Command::LoadState).ok();
                     // continue;
                 }
                 Button::LeftTrigger2 => libretro_sys::DEVICE_ID_JOYPAD_L2,
                 Button::RightTrigger => {
-                    libretro_sys::DEVICE_ID_JOYPAD_R
-                    // self.command_tx.try_send(Command::SaveState).ok();
-                    // continue;
+                    // libretro_sys::DEVICE_ID_JOYPAD_R
+                    self.command_tx.try_send(Command::ToggleTurbo).ok();
+                    continue;
                 }
                 Button::RightTrigger2 => libretro_sys::DEVICE_ID_JOYPAD_R2,
                 Button::Select => libretro_sys::DEVICE_ID_JOYPAD_SELECT,
@@ -292,4 +310,5 @@ impl Callbacks for ApeCallbacks {
 enum Command {
     SaveState,
     LoadState,
+    ToggleTurbo,
 }

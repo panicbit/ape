@@ -1,16 +1,17 @@
 use std::sync::mpsc::Receiver;
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use std::vec;
 
 pub struct RetroAudio {
     pub rx: Receiver<Vec<i16>>,
     pub current_frame: vec::IntoIter<i16>,
-    pub sample_rate: u32,
+    pub sample_rate: Arc<RwLock<u32>>,
 }
 
 impl rodio::Source for RetroAudio {
     fn current_frame_len(&self) -> Option<usize> {
-        None
+        Some(self.current_frame.len().max(1))
     }
 
     fn channels(&self) -> u16 {
@@ -18,7 +19,7 @@ impl rodio::Source for RetroAudio {
     }
 
     fn sample_rate(&self) -> u32 {
-        self.sample_rate
+        *self.sample_rate.read().unwrap()
     }
 
     fn total_duration(&self) -> Option<Duration> {
