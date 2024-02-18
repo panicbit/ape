@@ -1,5 +1,5 @@
 use std::ffi::c_uint;
-use std::fs::{self, File};
+use std::fs::{self};
 use std::path::{Path, PathBuf};
 
 use std::sync::mpsc::{sync_channel, SyncSender};

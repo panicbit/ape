@@ -3,7 +3,7 @@ use std::net::{Ipv4Addr, SocketAddr, UdpSocket};
 use std::{str, thread};
 
 use anyhow::{anyhow, Context, Result};
-use bstr::ByteSlice;
+
 use itertools::Itertools;
 
 use crate::hook;

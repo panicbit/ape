@@ -1,5 +1,4 @@
 use std::cell::RefCell;
-use std::ptr::null;
 
 use libretro_sys::PixelFormat;
 
