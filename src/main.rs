@@ -1,5 +1,6 @@
 use std::ffi::c_uint;
 use std::fs::{self};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use std::sync::mpsc::{sync_channel, SyncSender};
@@ -7,6 +8,7 @@ use std::time::{Duration, Instant};
 use std::{io, thread, vec};
 
 use anyhow::{anyhow, Context, Result};
+use atomicwrites::{AtomicFile, OverwriteBehavior};
 use clap::Parser;
 use gilrs::{Button, Gilrs};
 
@@ -135,10 +137,8 @@ fn run(core: impl AsRef<Path>, rom: impl AsRef<Path>) -> Result<()> {
             core.run();
 
             if last_sram_save.elapsed() >= Duration::from_secs(5) {
-                // eprintln!("Saving SRAM to {sram_path:?}");
-
-                if let Err(err) = fs::write(&sram_path, core.get_save_ram()) {
-                    eprintln!("Failed to save SRAM to {sram_path:?}: {err:?}");
+                if let Err(err) = core.save_sram_to(&sram_path) {
+                    eprintln!("Failed to save SRAM: {err:?}");
                 }
 
                 last_sram_save = Instant::now();
@@ -171,6 +171,10 @@ fn run(core: impl AsRef<Path>, rom: impl AsRef<Path>) -> Result<()> {
                     }
                 }
             }
+        }
+
+        if let Err(err) = core.save_sram_to(&sram_path) {
+            eprintln!("Failed to save SRAM: {err:?}");
         }
 
         Ok(())

@@ -2,6 +2,7 @@ use core::slice;
 use std::borrow::Cow;
 use std::ffi::CStr;
 use std::fs;
+use std::io::Write;
 use std::os::raw::c_void;
 use std::path::Path;
 use std::path::PathBuf;
@@ -9,6 +10,8 @@ use std::ptr::null;
 
 use anyhow::Context;
 use anyhow::{bail, Result};
+use atomicwrites::AtomicFile;
+use atomicwrites::OverwriteBehavior;
 use libretro_sys::GameGeometry;
 use libretro_sys::GameInfo;
 use libretro_sys::SystemAvInfo;
@@ -203,6 +206,16 @@ impl Core {
         let len = save_ram.len().min(data.len());
 
         save_ram[..len].copy_from_slice(&data[..len]);
+    }
+
+    pub fn save_sram_to(&self, sram_path: impl AsRef<Path>) -> Result<()> {
+        let sram_path = sram_path.as_ref();
+
+        AtomicFile::new(sram_path, OverwriteBehavior::AllowOverwrite)
+            .write(|file| file.write_all(self.get_save_ram()))
+            .with_context(|| format!("Failed to save SRAM to {sram_path:?}"))?;
+
+        Ok(())
     }
 }
 

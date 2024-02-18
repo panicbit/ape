@@ -92,6 +92,7 @@ name = "ape"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "atomicwrites",
  "bstr",
  "clap",
  "custom_debug",
@@ -106,6 +107,17 @@ dependencies = [
  "rubato",
  "strum",
  "winres",
+]
+
+[[package]]
+name = "atomicwrites"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fc7b2dbe9169059af0f821e811180fddc971fc210c776c133c7819ccd6e478db"
+dependencies = [
+ "rustix",
+ "tempfile",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
