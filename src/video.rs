@@ -60,13 +60,12 @@ impl Frame {
         let bytes_per_pixel = 4;
         let bytes_per_row = bytes_per_pixel * self.width;
 
-        // TODO: properly handle *native* endianness
         self.buffer
             .chunks_exact(self.pitch)
             .flat_map(|row| &row[..bytes_per_row])
             .copied()
             .tuples()
-            .map(|(b, g, r, a)| (a as u32) << 24 | (r as u32) << 16 | (g as u32) << 8 | (b as u32))
+            .map(|(b1, b2, b3, b4)| u32::from_ne_bytes([b1, b2, b3, b4]))
             .collect_vec()
     }
 
@@ -77,24 +76,23 @@ impl Frame {
         let max_g = (2u8.pow(6) - 1) as f32;
         let max_b = (2u8.pow(5) - 1) as f32;
 
-        // TODO: properly handle *native* endianness
         self.buffer
             .chunks_exact(self.pitch)
             .flat_map(|row| &row[..bytes_per_row])
             .copied()
             .tuples()
-            .map(|(low, high)| {
-                let pixel = (high as u16) << 8 | low as u16;
+            .map(|(b1, b2)| {
+                let pixel = u16::from_ne_bytes([b1, b2]);
                 let r = pixel >> 11;
                 let r = ((r as f32 / max_r) * 255.).round() as u8;
                 let g = (pixel >> 5) & 0b111111;
                 let g = ((g as f32 / max_g) * 255.).round() as u8;
                 let b = pixel & 0b11111;
                 let b = ((b as f32 / max_b) * 255.).round() as u8;
+                let a = 0;
 
-                (r, g, b)
+                u32::from_be_bytes([a, r, g, b])
             })
-            .map(|(r, g, b)| (r as u32) << 16 | (g as u32) << 8 | (b as u32))
             .collect_vec()
     }
 }
