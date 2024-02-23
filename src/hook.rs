@@ -1,6 +1,6 @@
 use std::sync::mpsc::{self, sync_channel, Receiver, SyncSender};
 
-use anyhow::{anyhow, Ok, Result};
+use anyhow::{anyhow, Result};
 
 use crate::core::Core;
 
@@ -9,19 +9,13 @@ type CoreHookFn = Box<dyn FnOnce(&mut Core) + Send>;
 pub struct Host {
     rx: Receiver<CoreHookFn>,
     tx: SyncSender<CoreHookFn>,
-    buffer_size: usize,
 }
 
 impl Host {
     pub fn new() -> Self {
-        let buffer_size = 100;
-        let (tx, rx) = sync_channel(buffer_size);
+        let (tx, rx) = sync_channel(0);
 
-        Self {
-            rx,
-            tx,
-            buffer_size,
-        }
+        Self { rx, tx }
     }
 
     pub fn handle(&self) -> Handle {
@@ -31,7 +25,7 @@ impl Host {
     }
 
     pub fn run(&self, core: &mut Core) {
-        for hook_fn in self.rx.try_iter().take(self.buffer_size) {
+        if let Ok(hook_fn) = self.rx.recv() {
             hook_fn(core);
         }
     }
@@ -53,7 +47,7 @@ impl Handle {
             let result = f(core);
 
             result_tx
-                .try_send(result)
+                .send(result)
                 .expect("BUG: hook result sender closed");
         });
 

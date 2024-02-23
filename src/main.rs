@@ -57,7 +57,7 @@ fn main() -> Result<()> {
 
     let mut native_options = eframe::NativeOptions::default();
 
-    // native_options.vsync = false;
+    native_options.vsync = true;
 
     eframe::run_native(
         "APE",
@@ -98,6 +98,7 @@ impl Gui {
 impl eframe::App for Gui {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         ctx.request_repaint_after(Duration::from_secs(1) / 60);
+
         TopBottomPanel::bottom("bottom").show(ctx, |ui| {
             let rupees = self
                 .core_handle
@@ -108,6 +109,7 @@ impl eframe::App for Gui {
             ui.heading(label);
         });
         CentralPanel::default().show(ctx, |ui| {
+            self.core_handle.run(|core| core.run()).unwrap();
             if let Ok(Some(frame)) = self.frame_rx.try_recv() {
                 let pixels = frame.buffer_to_packed_rgb888();
                 let size = [frame.width, frame.height];
@@ -212,7 +214,6 @@ fn run(
 
             loop {
                 hook_host.run(core);
-                core.run();
 
                 if last_sram_save.elapsed() >= Duration::from_secs(5) {
                     if let Err(err) = core.save_sram_to(&sram_path) {
