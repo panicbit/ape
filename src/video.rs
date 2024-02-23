@@ -1,8 +1,14 @@
+use core::panic;
 use std::ffi::{c_uint, c_void};
 use std::slice;
 
 use itertools::Itertools;
 use libretro_sys::PixelFormat;
+
+pub type R8 = u8;
+pub type G8 = u8;
+pub type B8 = u8;
+pub type A8 = u8;
 
 pub struct Frame {
     pub buffer: Vec<u8>,
@@ -49,14 +55,27 @@ impl Frame {
     }
 
     pub fn buffer_to_packed_argb32(&self) -> Vec<u32> {
+        let len = self.width * self.height * 4;
+        let mut pixels = Vec::with_capacity(len);
+
+        self.for_each_pixel(|r, g, b, a| {
+            let pixel = u32::from_be_bytes([a, r, g, b]);
+
+            pixels.push(pixel);
+        });
+
+        pixels
+    }
+
+    pub fn for_each_pixel(&self, f: impl FnMut(R8, G8, B8, A8)) {
         match self.pixel_format {
             PixelFormat::ARGB1555 => todo!(),
-            PixelFormat::ARGB8888 => self.argb8888_buffer_to_packed_argb32(),
-            PixelFormat::RGB565 => self.rgb565_buffer_to_packed_argb32(),
+            PixelFormat::ARGB8888 => self.for_each_pixel_argb8888(f),
+            PixelFormat::RGB565 => self.for_each_pixel_rgb565(f),
         }
     }
 
-    fn argb8888_buffer_to_packed_argb32(&self) -> Vec<u32> {
+    fn for_each_pixel_argb8888(&self, mut f: impl FnMut(R8, G8, B8, A8)) {
         let bytes_per_pixel = 4;
         let bytes_per_row = bytes_per_pixel * self.width;
 
@@ -65,11 +84,15 @@ impl Frame {
             .flat_map(|row| &row[..bytes_per_row])
             .copied()
             .tuples()
-            .map(|(b1, b2, b3, b4)| u32::from_ne_bytes([b1, b2, b3, b4]))
-            .collect_vec()
+            .for_each(|(b1, b2, b3, b4)| {
+                let pixel = u32::from_ne_bytes([b1, b2, b3, b4]);
+                let [a, r, g, b] = pixel.to_be_bytes();
+
+                f(r, g, b, a);
+            })
     }
 
-    fn rgb565_buffer_to_packed_argb32(&self) -> Vec<u32> {
+    fn for_each_pixel_rgb565(&self, mut f: impl FnMut(R8, G8, B8, A8)) {
         let bytes_per_pixel = 2;
         let bytes_per_row = bytes_per_pixel * self.width;
         let max_r = (2u8.pow(5) - 1) as f32;
@@ -81,7 +104,7 @@ impl Frame {
             .flat_map(|row| &row[..bytes_per_row])
             .copied()
             .tuples()
-            .map(|(b1, b2)| {
+            .for_each(|(b1, b2)| {
                 let pixel = u16::from_ne_bytes([b1, b2]);
                 let r = pixel >> 11;
                 let r = ((r as f32 / max_r) * 255.).round() as u8;
@@ -91,8 +114,7 @@ impl Frame {
                 let b = ((b as f32 / max_b) * 255.).round() as u8;
                 let a = 0;
 
-                u32::from_be_bytes([a, r, g, b])
+                f(r, g, b, a)
             })
-            .collect_vec()
     }
 }
