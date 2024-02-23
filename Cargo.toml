@@ -17,6 +17,8 @@ clap = { version = "4.5.0", features = [
 ] }
 custom_debug = "0.6.1"
 dotenv = "0.15.0"
+eframe = "0.26.2"
+egui = "0.26.2"
 # xinput allows receiving input without window being focused
 gilrs = { version = "0.10.4", default-features = false, features = ["xinput"] }
 indexmap = "2.2.3"

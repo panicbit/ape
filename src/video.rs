@@ -54,6 +54,19 @@ impl Frame {
         })
     }
 
+    pub fn buffer_to_packed_rgb888(&self) -> Vec<u8> {
+        let len = self.width * self.height * 3;
+        let mut pixels = Vec::with_capacity(len);
+
+        self.for_each_pixel(|r, g, b, a| {
+            pixels.push(r);
+            pixels.push(g);
+            pixels.push(b);
+        });
+
+        pixels
+    }
+
     pub fn buffer_to_packed_argb32(&self) -> Vec<u32> {
         let len = self.width * self.height * 4;
         let mut pixels = Vec::with_capacity(len);

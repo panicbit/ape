@@ -3,14 +3,22 @@ use std::fs::{self};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use std::sync::mpsc::{sync_channel, SyncSender};
+use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TrySendError};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 use std::{io, thread, vec};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Context, Error, Result};
 use atomicwrites::{AtomicFile, OverwriteBehavior};
 use clap::Parser;
+use eframe::CreationContext;
+use egui::epaint::ImageDelta;
+use egui::load::SizedTexture;
+use egui::widgets::Image;
+use egui::{
+    CentralPanel, ColorImage, ImageData, TextureFilter, TextureHandle, TextureId, TextureOptions,
+    TextureWrapMode, TopBottomPanel, Vec2, Widget, WidgetText,
+};
 use gilrs::{Button, Gilrs};
 
 use libretro_sys::{PixelFormat, DEVICE_JOYPAD};
@@ -36,172 +44,225 @@ struct Cli {
     rom: PathBuf,
 }
 
+const CORE_TEXTURE_OPTIONS: TextureOptions = TextureOptions {
+    magnification: TextureFilter::Nearest,
+    minification: TextureFilter::Nearest,
+    wrap_mode: TextureWrapMode::ClampToEdge,
+};
+
 fn main() -> Result<()> {
     dotenv::dotenv().ok();
 
     let cli = Cli::parse();
 
-    run(&cli.core, &cli.rom)?;
+    let mut native_options = eframe::NativeOptions::default();
+
+    // native_options.vsync = false;
+
+    eframe::run_native(
+        "APE",
+        native_options,
+        Box::new(move |cc| Box::new(Gui::new(cc, cli))),
+    )
+    .unwrap();
+
+    todo!();
 
     Ok(())
 }
 
-fn run(core: impl AsRef<Path>, rom: impl AsRef<Path>) -> Result<()> {
-    let (_stream, stream_handle) = rodio::OutputStream::try_default()?;
+struct Gui {
+    core_texture: TextureHandle,
+    frame_rx: Receiver<Option<Frame>>,
+    core_handle: hook::Handle,
+}
 
-    let gilrs = Gilrs::new()
-        .map_err(|err| anyhow!("{err}"))
-        .context("failed to initialize gilrs")?;
+impl Gui {
+    fn new(cc: &CreationContext, cli: Cli) -> Self {
+        let texture_name = "Core";
+        let image = ImageData::from(ColorImage::example());
+        let core_texture = cc
+            .egui_ctx
+            .load_texture(texture_name, image, CORE_TEXTURE_OPTIONS);
+
+        let (frame_rx, core_handle) = run(&cli.core, &cli.rom, cc.egui_ctx.clone()).unwrap();
+
+        Self {
+            core_texture,
+            frame_rx,
+            core_handle,
+        }
+    }
+}
+
+impl eframe::App for Gui {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        ctx.request_repaint_after(Duration::from_secs(1) / 60);
+        TopBottomPanel::bottom("bottom").show(ctx, |ui| {
+            let rupees = self
+                .core_handle
+                .run(|core| core.get_memory(0xDB5D, 2))
+                .unwrap();
+
+            let label = format!("Rupee count: {:X}{:02X}", rupees[0], rupees[1]);
+            ui.heading(label);
+        });
+        CentralPanel::default().show(ctx, |ui| {
+            if let Ok(Some(frame)) = self.frame_rx.try_recv() {
+                let pixels = frame.buffer_to_packed_rgb888();
+                let size = [frame.width, frame.height];
+                let image = ColorImage::from_rgb(size, &pixels);
+                let image = ImageDelta::full(image, CORE_TEXTURE_OPTIONS);
+
+                ctx.tex_manager().write().set(self.core_texture.id(), image);
+            }
+
+            let image = Image::new(&self.core_texture).fit_to_exact_size(ui.available_size());
+
+            ui.add_sized(ui.available_size(), image);
+        });
+    }
+}
+
+fn run(
+    core: impl Into<PathBuf>,
+    rom: impl Into<PathBuf>,
+    egui_ctx: egui::Context,
+) -> Result<(Receiver<Option<Frame>>, hook::Handle)> {
+    let core = core.into();
+    let rom = rom.into();
 
     let (frame_tx, frame_rx) = sync_channel(1);
     let (audio_tx, audio_rx) = sync_channel(1);
     let (command_tx, command_rx) = sync_channel(32);
 
-    let sram_path = rom.as_ref().with_extension("sram");
+    let hook_host = hook::Host::new();
+    let core_handle = hook_host.handle();
 
-    let callbacks = ApeCallbacks {
-        frame_tx,
-        audio_tx,
-        gilrs,
-        input_state: 0,
-        command_tx,
-    };
+    thread::spawn(move || {
+        let (_stream, stream_handle) = rodio::OutputStream::try_default()?;
 
-    let core_config = core::Config {
-        core: core.as_ref().to_owned(),
-        rom: rom.as_ref().to_owned(),
-        callbacks: callbacks.boxed(),
-    };
+        let gilrs = Gilrs::new()
+            .map_err(|err| anyhow!("{err}"))
+            .context("failed to initialize gilrs")?;
 
-    let mut last_sram_save = Instant::now();
-    let mut speed_factor = 1;
+        let sram_path = rom.with_extension("sram");
 
-    Core::load(core_config, |core| -> Result<()> {
-        match fs::read(&sram_path) {
-            Ok(sram) => {
-                eprintln!("Restoring SRAM from {sram_path:?}");
-                core.restore_save_ram(&sram);
-            }
-            Err(err) => {
-                if err.kind() == io::ErrorKind::NotFound {
-                    eprintln!("No SRAM file found at {sram_path:?}");
-                } else {
-                    eprintln!("Failed to read SRAM from {sram_path:?}");
-                }
-            }
-        }
-
-        let hook_host = hook::Host::new();
-
-        remote::start(hook_host.handle());
-
-        let system_av_info = core.get_system_av_info();
-
-        println!("{:#?}", system_av_info);
-        // panic!("sample rate: {}", system_av_info.timing.sample_rate);
-
-        let sample_rate = Arc::new(RwLock::new(
-            system_av_info.timing.sample_rate as u32 * speed_factor,
-        ));
-
-        let retro_audio = RetroAudio {
-            rx: audio_rx,
-            current_frame: Vec::new().into_iter(),
-            sample_rate: sample_rate.clone(),
+        let callbacks = ApeCallbacks {
+            frame_tx,
+            audio_tx,
+            gilrs,
+            input_state: 0,
+            command_tx,
+            egui_ctx,
         };
 
-        thread::spawn(move || {
-            let res = stream_handle
-                .play_raw(retro_audio.convert_samples())
-                .context("failed to play stream");
-
-            if let Err(err) = res {
-                eprintln!("Error while playing audio: {err}");
-            }
-        });
-
-        let window_options = WindowOptions {
-            resize: true,
-            scale_mode: minifb::ScaleMode::AspectRatioStretch,
-            ..Default::default()
+        let core_config = core::Config {
+            core,
+            rom,
+            callbacks: callbacks.boxed(),
         };
 
-        let mut saved_state = None;
+        let mut last_sram_save = Instant::now();
+        let mut speed_factor = 1;
 
-        let scale = 3;
-        let window_width = system_av_info.geometry.base_width as usize * scale;
-        let window_height = system_av_info.geometry.base_height as usize * scale;
-        let mut window = Window::new("APE", window_width, window_height, window_options)
-            .context("failed to open window")?;
-
-        window.limit_update_rate(Some(Duration::from_secs(1) / (61 * speed_factor)));
-
-        let mut current_frame = Frame::empty();
-
-        while window.is_open() {
-            hook_host.run(core);
-            core.run();
-
-            if last_sram_save.elapsed() >= Duration::from_secs(5) {
-                if let Err(err) = core.save_sram_to(&sram_path) {
-                    eprintln!("Failed to save SRAM: {err:?}");
+        Core::load(core_config, |core| -> Result<()> {
+            match fs::read(&sram_path) {
+                Ok(sram) => {
+                    eprintln!("Restoring SRAM from {sram_path:?}");
+                    core.restore_save_ram(&sram);
                 }
-
-                last_sram_save = Instant::now();
+                Err(err) => {
+                    if err.kind() == io::ErrorKind::NotFound {
+                        eprintln!("No SRAM file found at {sram_path:?}");
+                    } else {
+                        eprintln!("Failed to read SRAM from {sram_path:?}");
+                    }
+                }
             }
 
-            if let Ok(frame) = frame_rx.recv_timeout(Duration::from_secs(1) / 60) {
-                if let Some(frame) = frame {
-                    current_frame = frame;
+            remote::start(hook_host.handle());
+
+            let system_av_info = core.get_system_av_info();
+
+            println!("{:#?}", system_av_info);
+            // panic!("sample rate: {}", system_av_info.timing.sample_rate);
+
+            let sample_rate = Arc::new(RwLock::new(
+                system_av_info.timing.sample_rate as u32 * speed_factor,
+            ));
+
+            let retro_audio = RetroAudio {
+                rx: audio_rx,
+                current_frame: Vec::new().into_iter(),
+                sample_rate: sample_rate.clone(),
+            };
+
+            thread::spawn(move || {
+                let res = stream_handle
+                    .play_raw(retro_audio.convert_samples())
+                    .context("failed to play stream");
+
+                if let Err(err) = res {
+                    eprintln!("Error while playing audio: {err}");
+                }
+            });
+
+            let mut saved_state = None;
+
+            loop {
+                hook_host.run(core);
+                core.run();
+
+                if last_sram_save.elapsed() >= Duration::from_secs(5) {
+                    if let Err(err) = core.save_sram_to(&sram_path) {
+                        eprintln!("Failed to save SRAM: {err:?}");
+                    }
+
+                    last_sram_save = Instant::now();
                 }
 
-                let buffer = current_frame.buffer_to_packed_argb32();
-
-                window
-                    .update_with_buffer(&buffer, current_frame.width, current_frame.height)
-                    .context("failed to update window with buffer")?;
-            }
-
-            if let Ok(command) = command_rx.try_recv() {
-                match command {
-                    Command::SaveState => match core.state() {
-                        Ok(state) => saved_state = Some(state),
-                        Err(err) => eprintln!("{err:?}"),
-                    },
-                    Command::LoadState => {
-                        if let Some(state) = &saved_state {
-                            if let Err(err) = core.restore_state(state) {
-                                eprintln!("{err:?}")
+                if let Ok(command) = command_rx.try_recv() {
+                    match command {
+                        Command::SaveState => match core.state() {
+                            Ok(state) => saved_state = Some(state),
+                            Err(err) => eprintln!("{err:?}"),
+                        },
+                        Command::LoadState => {
+                            if let Some(state) = &saved_state {
+                                if let Err(err) = core.restore_state(state) {
+                                    eprintln!("{err:?}")
+                                }
                             }
                         }
-                    }
-                    Command::ToggleTurbo => {
-                        speed_factor = match speed_factor {
-                            1 => 2,
-                            _ => 1,
-                        };
+                        Command::ToggleTurbo => {
+                            speed_factor = match speed_factor {
+                                1 => 2,
+                                _ => 1,
+                            };
 
-                        *sample_rate.write().unwrap() =
-                            system_av_info.timing.sample_rate as u32 * speed_factor;
-                        window
-                            .limit_update_rate(Some(Duration::from_secs(1) / (61 * speed_factor)));
+                            *sample_rate.write().unwrap() =
+                                system_av_info.timing.sample_rate as u32 * speed_factor;
+                        }
                     }
                 }
             }
-        }
 
-        if let Err(err) = core.save_sram_to(&sram_path) {
-            eprintln!("Failed to save SRAM: {err:?}");
-        }
+            if let Err(err) = core.save_sram_to(&sram_path) {
+                eprintln!("Failed to save SRAM: {err:?}");
+            }
 
-        Ok(())
-    })
-    .context("failed to load core")?
-    .context("runtime error")?;
+            Ok(())
+        })
+        .context("failed to load core")?
+        .context("runtime error")?;
 
-    println!("Exiting normally");
+        println!("Exiting normally");
 
-    Ok(())
+        anyhow::Ok(())
+    });
+
+    Ok((frame_rx, core_handle))
 }
 
 struct ApeCallbacks {
@@ -210,6 +271,7 @@ struct ApeCallbacks {
     gilrs: Gilrs,
     input_state: i16,
     command_tx: SyncSender<Command>,
+    egui_ctx: egui::Context,
 }
 
 impl Callbacks for ApeCallbacks {
@@ -217,6 +279,8 @@ impl Callbacks for ApeCallbacks {
         if self.frame_tx.try_send(frame).is_err() {
             eprintln!("Dropping frame, failed to send");
         }
+
+        self.egui_ctx.request_repaint();
     }
 
     fn supports_pixel_format(&mut self, pixel_format: PixelFormat) -> bool {
