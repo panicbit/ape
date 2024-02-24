@@ -108,7 +108,9 @@ impl eframe::App for Gui {
             let label = format!("Rupee count: {:X}{:02X}", rupees[0], rupees[1]);
             ui.heading(label);
         });
-        CentralPanel::default().show(ctx, |ui| {
+
+        let frame = egui::Frame::default();
+        CentralPanel::default().frame(frame).show(ctx, |ui| {
             self.core_handle.run(|core| core.run()).unwrap();
             if let Ok(Some(frame)) = self.frame_rx.try_recv() {
                 let pixels = frame.buffer_to_packed_rgb888();
