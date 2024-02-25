@@ -22,7 +22,6 @@ use egui::{
 use gilrs::{Button, Gilrs};
 
 use libretro_sys::{PixelFormat, DEVICE_JOYPAD};
-use minifb::{Key, Window, WindowOptions};
 use rodio::Source;
 
 use crate::audio::RetroAudio;
@@ -64,9 +63,8 @@ fn main() -> Result<()> {
         native_options,
         Box::new(move |cc| Box::new(Gui::new(cc, cli))),
     )
-    .unwrap();
-
-    todo!();
+    .map_err(|err| anyhow!("{err}"))
+    .context("failed to run gui")?;
 
     Ok(())
 }
