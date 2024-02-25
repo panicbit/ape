@@ -8,8 +8,8 @@ use egui::epaint::ImageDelta;
 
 use egui::widgets::Image;
 use egui::{
-    CentralPanel, ColorImage, ImageData, Key, KeyboardShortcut, Modifiers, TextureFilter,
-    TextureHandle, TextureOptions, TextureWrapMode, TopBottomPanel,
+    menu, CentralPanel, ColorImage, ImageData, Key, KeyboardShortcut, Modifiers, TextureFilter,
+    TextureHandle, TextureOptions, TextureWrapMode, TopBottomPanel, ViewportCommand,
 };
 
 use crate::core;
@@ -45,6 +45,8 @@ pub struct Gui {
     frame_rx: Receiver<Option<Frame>>,
     core_handle: core::Handle,
     save_state: Option<Vec<u8>>,
+    show_menu: bool,
+    fullscreen: bool,
 }
 
 impl Gui {
@@ -62,6 +64,8 @@ impl Gui {
             frame_rx,
             core_handle,
             save_state: None,
+            show_menu: false,
+            fullscreen: false,
         }
     }
 }
@@ -71,9 +75,10 @@ impl eframe::App for Gui {
         ctx.input_mut(|input| {
             if input.consume_key(Modifiers::SHIFT, Key::F1) {
                 let save_state = self.core_handle.run(|core| core.state()).unwrap().unwrap();
-
                 self.save_state = Some(save_state);
-            } else if input.consume_key(Modifiers::NONE, Key::F1) {
+            }
+
+            if input.consume_key(Modifiers::NONE, Key::F1) {
                 if let Some(save_state) = &self.save_state {
                     let save_state = save_state.clone();
                     self.core_handle
@@ -82,9 +87,31 @@ impl eframe::App for Gui {
                         .unwrap();
                 }
             }
+
+            if input.consume_key(Modifiers::NONE, Key::Escape) {
+                self.show_menu = !self.show_menu;
+            }
+
+            // if input.consume_key(Modifiers::NONE, Key::F11) {
+            //     self.fullscreen = !self.fullscreen;
+            //     ctx.send_viewport_cmd(ViewportCommand::Fullscreen(self.fullscreen));
+            // }
         });
 
-        ctx.request_repaint_after(Duration::from_secs(1) / 60);
+        // ctx.request_repaint_after(Duration::from_secs(1) / 60);
+
+        if self.show_menu {
+            TopBottomPanel::top("top").show(ctx, |ui| {
+                menu::bar(ui, |ui| {
+                    ui.menu_button("File", |ui| {
+                        if ui.button("Load ROM").clicked() {
+                            println!("load rom!");
+                            ui.close_menu();
+                        }
+                    });
+                });
+            });
+        }
 
         TopBottomPanel::bottom("bottom").show(ctx, |ui| {
             let rupees = self
