@@ -8,14 +8,16 @@ use egui::epaint::ImageDelta;
 
 use egui::widgets::Image;
 use egui::{
-    menu, CentralPanel, ColorImage, ImageData, Key, KeyboardShortcut, Modifiers, TextureFilter,
-    TextureHandle, TextureOptions, TextureWrapMode, TopBottomPanel, ViewportCommand,
+    menu, CentralPanel, ColorImage, ImageData, TextureFilter, TextureHandle, TextureOptions,
+    TextureWrapMode, TopBottomPanel,
 };
 
 use crate::core;
 use crate::video::Frame;
 
 use super::Cli;
+
+mod input;
 
 const CORE_TEXTURE_OPTIONS: TextureOptions = TextureOptions {
     magnification: TextureFilter::Nearest,
@@ -72,33 +74,9 @@ impl Gui {
 
 impl eframe::App for Gui {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        ctx.input_mut(|input| {
-            if input.consume_key(Modifiers::SHIFT, Key::F1) {
-                let save_state = self.core_handle.run(|core| core.state()).unwrap().unwrap();
-                self.save_state = Some(save_state);
-            }
+        ctx.request_repaint_after(Duration::from_secs(1) / 60);
 
-            if input.consume_key(Modifiers::NONE, Key::F1) {
-                if let Some(save_state) = &self.save_state {
-                    let save_state = save_state.clone();
-                    self.core_handle
-                        .run(move |core| core.restore_state(&save_state))
-                        .unwrap()
-                        .unwrap();
-                }
-            }
-
-            if input.consume_key(Modifiers::NONE, Key::Escape) {
-                self.show_menu = !self.show_menu;
-            }
-
-            // if input.consume_key(Modifiers::NONE, Key::F11) {
-            //     self.fullscreen = !self.fullscreen;
-            //     ctx.send_viewport_cmd(ViewportCommand::Fullscreen(self.fullscreen));
-            // }
-        });
-
-        // ctx.request_repaint_after(Duration::from_secs(1) / 60);
+        self.handle_input(ctx);
 
         if self.show_menu {
             TopBottomPanel::top("top").show(ctx, |ui| {
