@@ -21,10 +21,9 @@ use crate::core::{Callbacks, Core};
 use crate::video::Frame;
 
 mod audio;
-pub mod core;
+pub(crate) mod core;
 mod environment;
 mod gui;
-mod hook;
 mod remote;
 mod video;
 
@@ -50,7 +49,7 @@ fn run(
     core: impl Into<PathBuf>,
     rom: impl Into<PathBuf>,
     egui_ctx: egui::Context,
-) -> Result<(Receiver<Option<Frame>>, hook::Handle)> {
+) -> Result<(Receiver<Option<Frame>>, core::Handle)> {
     let core = core.into();
     let rom = rom.into();
 
@@ -58,8 +57,8 @@ fn run(
     let (audio_tx, audio_rx) = sync_channel(1);
     let (command_tx, command_rx) = sync_channel(32);
 
-    let hook_host = hook::Host::new();
-    let core_handle = hook_host.handle();
+    let core_host = core::Host::new();
+    let core_handle = core_host.handle();
 
     thread::spawn(move || {
         let (_stream, stream_handle) = rodio::OutputStream::try_default()?;
@@ -103,7 +102,7 @@ fn run(
                 }
             }
 
-            remote::start(hook_host.handle());
+            remote::start(core_host.handle());
 
             let system_av_info = core.get_system_av_info();
 
@@ -133,7 +132,7 @@ fn run(
             let mut saved_state = None;
 
             loop {
-                hook_host.run(core);
+                core_host.run(core);
 
                 if last_sram_save.elapsed() >= Duration::from_secs(5) {
                     if let Err(err) = core.save_sram_to(&sram_path) {

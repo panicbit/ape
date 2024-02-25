@@ -6,17 +6,17 @@ use anyhow::{anyhow, Context, Result};
 
 use itertools::Itertools;
 
-use crate::hook;
+use crate::core;
 
-pub fn start(hook_handle: hook::Handle) {
+pub fn start(core_handle: core::Handle) {
     thread::spawn(move || {
-        if let Err(err) = try_start(hook_handle) {
+        if let Err(err) = try_start(core_handle) {
             eprintln!("remote interface stopped with error: {err:#?}");
         }
     });
 }
 
-fn try_start(hook_handle: hook::Handle) -> Result<()> {
+fn try_start(core_handle: core::Handle) -> Result<()> {
     let socket =
         UdpSocket::bind((Ipv4Addr::LOCALHOST, 55355)).context("failed to create socket")?;
     let msg = &mut [0; 2048];
@@ -27,14 +27,14 @@ fn try_start(hook_handle: hook::Handle) -> Result<()> {
             .context("remote: failed to recv message")?;
         let msg = &msg[..len];
 
-        if let Err(err) = handle_message(&hook_handle, &socket, sockaddr, msg) {
+        if let Err(err) = handle_message(&core_handle, &socket, sockaddr, msg) {
             eprintln!("remote: failed to handle message: {err:?}")
         }
     }
 }
 
 fn handle_message(
-    hook_handle: &hook::Handle,
+    core_handle: &core::Handle,
     socket: &UdpSocket,
     reply_addr: SocketAddr,
     msg: &[u8],
@@ -45,7 +45,7 @@ fn handle_message(
     let mut parts = msg.split_whitespace();
     let command = parts.next().context("received message without command")?;
     let context = CommandContext {
-        hook_handle,
+        core_handle,
         socket,
         reply_addr,
         args: &mut parts,
@@ -57,7 +57,7 @@ fn handle_message(
 }
 
 struct CommandContext<'a, I> {
-    hook_handle: &'a hook::Handle,
+    core_handle: &'a core::Handle,
     socket: &'a UdpSocket,
     reply_addr: SocketAddr,
     args: &'a mut I,
@@ -103,7 +103,7 @@ where
 
     fn handle_get_status(self) -> Result<()> {
         let system_info = self
-            .hook_handle
+            .core_handle
             .run(|core| core.get_system_info().to_owned())?;
 
         let system_id = system_info.system_id.unwrap_or(&system_info.library_name);
@@ -122,7 +122,7 @@ where
             String::with_capacity("READ_CORE_MEMORY ".len() + address_str.len() + len * 3 + 1);
 
         let mem = self
-            .hook_handle
+            .core_handle
             .run(move |core| core.get_memory(address, len).to_vec())?;
 
         msg.push_str("READ_CORE_MEMORY ");
@@ -151,7 +151,7 @@ where
             .context("invalid byte format")?;
 
         let bytes_written = self
-            .hook_handle
+            .core_handle
             .run(move |core| core.write_memory(address, &bytes))?;
 
         self.reply(format!("WRITE_CORE_MEMORY {address_str} {bytes_written}\n"))

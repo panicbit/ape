@@ -4,11 +4,11 @@ use anyhow::{anyhow, Result};
 
 use crate::core::Core;
 
-type CoreHookFn = Box<dyn FnOnce(&mut Core) + Send>;
+type CoreRunFn = Box<dyn FnOnce(&mut Core) + Send>;
 
 pub struct Host {
-    rx: Receiver<CoreHookFn>,
-    tx: SyncSender<CoreHookFn>,
+    rx: Receiver<CoreRunFn>,
+    tx: SyncSender<CoreRunFn>,
 }
 
 impl Host {
@@ -25,15 +25,15 @@ impl Host {
     }
 
     pub fn run(&self, core: &mut Core) {
-        if let Ok(hook_fn) = self.rx.recv() {
-            hook_fn(core);
+        if let Ok(run_fn) = self.rx.recv() {
+            run_fn(core);
         }
     }
 }
 
 #[derive(Clone)]
 pub struct Handle {
-    tx: SyncSender<CoreHookFn>,
+    tx: SyncSender<CoreRunFn>,
 }
 
 impl Handle {
@@ -43,19 +43,21 @@ impl Handle {
         R: Send + 'static,
     {
         let (result_tx, result_rx) = mpsc::sync_channel(0);
-        let hook_fn: CoreHookFn = Box::new(move |core| {
+        let run_fn: CoreRunFn = Box::new(move |core| {
             let result = f(core);
 
             result_tx
                 .send(result)
-                .expect("BUG: hook result sender closed");
+                .expect("BUG: core run fn result sender closed");
         });
 
         self.tx
-            .send(hook_fn)
-            .map_err(|_| anyhow!("hook channel closed"))?;
+            .send(run_fn)
+            .map_err(|_| anyhow!("core run fn channel closed"))?;
 
-        let result = result_rx.recv().expect("BUG: hook result receiver closed");
+        let result = result_rx
+            .recv()
+            .expect("BUG: core run fn result receiver closed");
 
         Ok(result)
     }

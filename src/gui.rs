@@ -12,7 +12,7 @@ use egui::{
     TextureWrapMode, TopBottomPanel,
 };
 
-use crate::hook;
+use crate::core;
 use crate::video::Frame;
 
 use super::Cli;
@@ -43,7 +43,7 @@ pub fn run(cli: Cli) -> Result<()> {
 pub struct Gui {
     core_texture: TextureHandle,
     frame_rx: Receiver<Option<Frame>>,
-    core_handle: hook::Handle,
+    core_handle: core::Handle,
 }
 
 impl Gui {

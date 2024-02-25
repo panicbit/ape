@@ -30,6 +30,9 @@ pub use memory_map::*;
 mod state;
 pub use state::*;
 
+mod handle;
+pub use handle::*;
+
 const EXPECTED_LIB_RETRO_VERSION: u32 = 1;
 
 pub struct Core {
