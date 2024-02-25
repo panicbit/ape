@@ -1,6 +1,5 @@
 use std::ffi::c_uint;
-use std::fs::{self};
-use std::io::Write;
+use std::fs;
 use std::path::PathBuf;
 
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};

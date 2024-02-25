@@ -24,9 +24,10 @@ const CORE_TEXTURE_OPTIONS: TextureOptions = TextureOptions {
 };
 
 pub fn run(cli: Cli) -> Result<()> {
-    let mut native_options = eframe::NativeOptions::default();
-
-    native_options.vsync = true;
+    let native_options = eframe::NativeOptions {
+        vsync: true,
+        ..<_>::default()
+    };
 
     eframe::run_native(
         "APE",
