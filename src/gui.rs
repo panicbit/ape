@@ -1,25 +1,17 @@
 use std::sync::mpsc::Receiver;
-use std::time::{Duration, Instant};
-use std::{io, thread, vec};
+use std::time::Duration;
 
-use anyhow::{anyhow, Context, Error, Result};
-use atomicwrites::{AtomicFile, OverwriteBehavior};
-use clap::Parser;
+use anyhow::{anyhow, Context, Result};
+
 use eframe::CreationContext;
 use egui::epaint::ImageDelta;
-use egui::load::SizedTexture;
+
 use egui::widgets::Image;
 use egui::{
-    CentralPanel, ColorImage, ImageData, TextureFilter, TextureHandle, TextureId, TextureOptions,
-    TextureWrapMode, TopBottomPanel, Vec2, Widget, WidgetText,
+    CentralPanel, ColorImage, ImageData, TextureFilter, TextureHandle, TextureOptions,
+    TextureWrapMode, TopBottomPanel,
 };
-use gilrs::{Button, Gilrs};
 
-use libretro_sys::{PixelFormat, DEVICE_JOYPAD};
-use rodio::Source;
-
-use crate::audio::RetroAudio;
-use crate::core::{Callbacks, Core};
 use crate::hook;
 use crate::video::Frame;
 

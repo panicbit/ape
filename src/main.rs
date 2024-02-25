@@ -1,24 +1,17 @@
 use std::ffi::c_uint;
 use std::fs::{self};
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TrySendError};
+use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 use std::{io, thread, vec};
 
-use anyhow::{anyhow, Context, Error, Result};
-use atomicwrites::{AtomicFile, OverwriteBehavior};
+use anyhow::{anyhow, Context, Result};
+
 use clap::Parser;
-use eframe::CreationContext;
-use egui::epaint::ImageDelta;
-use egui::load::SizedTexture;
-use egui::widgets::Image;
-use egui::{
-    CentralPanel, ColorImage, ImageData, TextureFilter, TextureHandle, TextureId, TextureOptions,
-    TextureWrapMode, TopBottomPanel, Vec2, Widget, WidgetText,
-};
+
 use gilrs::{Button, Gilrs};
 
 use libretro_sys::{PixelFormat, DEVICE_JOYPAD};

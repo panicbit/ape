@@ -1,4 +1,3 @@
-use core::panic;
 use std::ffi::{c_uint, c_void};
 use std::slice;
 
@@ -58,7 +57,7 @@ impl Frame {
         let len = self.width * self.height * 3;
         let mut pixels = Vec::with_capacity(len);
 
-        self.for_each_pixel(|r, g, b, a| {
+        self.for_each_pixel(|r, g, b, _a| {
             pixels.push(r);
             pixels.push(g);
             pixels.push(b);
