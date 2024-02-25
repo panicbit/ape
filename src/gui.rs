@@ -8,8 +8,8 @@ use egui::epaint::ImageDelta;
 
 use egui::widgets::Image;
 use egui::{
-    CentralPanel, ColorImage, ImageData, TextureFilter, TextureHandle, TextureOptions,
-    TextureWrapMode, TopBottomPanel,
+    CentralPanel, ColorImage, ImageData, Key, KeyboardShortcut, Modifiers, TextureFilter,
+    TextureHandle, TextureOptions, TextureWrapMode, TopBottomPanel,
 };
 
 use crate::core;
@@ -44,6 +44,7 @@ pub struct Gui {
     core_texture: TextureHandle,
     frame_rx: Receiver<Option<Frame>>,
     core_handle: core::Handle,
+    save_state: Option<Vec<u8>>,
 }
 
 impl Gui {
@@ -60,12 +61,29 @@ impl Gui {
             core_texture,
             frame_rx,
             core_handle,
+            save_state: None,
         }
     }
 }
 
 impl eframe::App for Gui {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        ctx.input_mut(|input| {
+            if input.consume_key(Modifiers::SHIFT, Key::F1) {
+                let save_state = self.core_handle.run(|core| core.state()).unwrap().unwrap();
+
+                self.save_state = Some(save_state);
+            } else if input.consume_key(Modifiers::NONE, Key::F1) {
+                if let Some(save_state) = &self.save_state {
+                    let save_state = save_state.clone();
+                    self.core_handle
+                        .run(move |core| core.restore_state(&save_state))
+                        .unwrap()
+                        .unwrap();
+                }
+            }
+        });
+
         ctx.request_repaint_after(Duration::from_secs(1) / 60);
 
         TopBottomPanel::bottom("bottom").show(ctx, |ui| {
