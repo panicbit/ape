@@ -1,10 +1,11 @@
 use std::ffi::{c_uint, c_void};
 use std::slice;
 
-use libretro_sys::PixelFormat;
+use libretro_sys::{PixelFormat, DEVICE_JOYPAD};
 
 use crate::core::{MemoryMap, CALLBACKS, STATE};
 use crate::environment::Command;
+use crate::input::Button;
 use crate::video::Frame;
 
 pub unsafe extern "C" fn video_refresh(
@@ -43,7 +44,22 @@ pub unsafe extern "C" fn input_state(
     index: c_uint,
     id: c_uint,
 ) -> i16 {
-    CALLBACKS.with_borrow_mut(|callbacks| callbacks.input_state(port, device, index, id))
+    CALLBACKS.with_borrow_mut(|callbacks| {
+        if device != DEVICE_JOYPAD || port != 0 {
+            return 0;
+        }
+
+        let buttons = callbacks.input_buttons(port);
+        let Some(button) = Button::from_raw_retro_joypad_device_id(id) else {
+            return 0;
+        };
+
+        if buttons.contains(button) {
+            1 << id
+        } else {
+            0
+        }
+    })
 }
 
 pub unsafe extern "C" fn environment(command: u32, data: *mut c_void) -> bool {

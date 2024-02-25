@@ -1,8 +1,10 @@
 use std::cell::RefCell;
 use std::ffi::c_uint;
 
+use enumset::EnumSet;
 use libretro_sys::PixelFormat;
 
+use crate::input;
 use crate::video::Frame;
 
 pub mod ffi;
@@ -25,7 +27,7 @@ pub trait Callbacks {
     fn audio_sample(&mut self, left: i16, right: i16);
     fn audio_samples(&mut self, samples: &[i16]);
     fn input_poll(&mut self);
-    fn input_state(&mut self, port: c_uint, device: c_uint, index: c_uint, id: c_uint) -> i16;
+    fn input_buttons(&self, port: c_uint) -> EnumSet<input::Button>;
     fn can_dupe_frames(&mut self) -> bool {
         false
     }
@@ -63,9 +65,8 @@ impl Callbacks for Stub {
         eprintln!("WARNING: input_poll is stubbed");
     }
 
-    fn input_state(&mut self, _port: c_uint, _device: c_uint, _index: c_uint, _id: c_uint) -> i16 {
-        eprintln!("WARNING: input_poll is stubbed");
-
-        0
+    fn input_buttons(&self, _port: c_uint) -> EnumSet<input::Button> {
+        eprintln!("WARNING: input_buttons is stubbed");
+        EnumSet::empty()
     }
 }

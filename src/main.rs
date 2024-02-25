@@ -3,7 +3,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::{io, thread, vec};
 
@@ -11,9 +11,11 @@ use anyhow::{anyhow, Context, Result};
 
 use clap::Parser;
 
-use gilrs::{Button, Gilrs};
+use enumset::EnumSet;
+use gilrs::Gilrs;
 
-use libretro_sys::{PixelFormat, DEVICE_JOYPAD};
+use libretro_sys::PixelFormat;
+use parking_lot::RwLock;
 use rodio::Source;
 
 use crate::audio::RetroAudio;
@@ -24,6 +26,7 @@ mod audio;
 pub(crate) mod core;
 mod environment;
 mod gui;
+mod input;
 mod remote;
 mod video;
 
@@ -55,7 +58,6 @@ fn run(
 
     let (frame_tx, frame_rx) = sync_channel(1);
     let (audio_tx, audio_rx) = sync_channel(1);
-    let (command_tx, command_rx) = sync_channel(32);
 
     let core_host = core::Host::new();
     let core_handle = core_host.handle();
@@ -69,13 +71,15 @@ fn run(
 
         let sram_path = rom.with_extension("sram");
 
+        let speed_factor = Arc::new(RwLock::new(1.0));
+
         let callbacks = ApeCallbacks {
             frame_tx,
             audio_tx,
             gilrs,
-            input_state: 0,
-            command_tx,
             egui_ctx,
+            buttons: <_>::default(),
+            speed_factor: Arc::clone(&speed_factor),
         };
 
         let core_config = core::Config {
@@ -85,7 +89,6 @@ fn run(
         };
 
         let mut last_sram_save = Instant::now();
-        let mut speed_factor = 1;
 
         Core::load(core_config, |core| -> Result<()> {
             match fs::read(&sram_path) {
@@ -109,14 +112,11 @@ fn run(
             println!("{:#?}", system_av_info);
             // panic!("sample rate: {}", system_av_info.timing.sample_rate);
 
-            let sample_rate = Arc::new(RwLock::new(
-                system_av_info.timing.sample_rate as u32 * speed_factor,
-            ));
-
             let retro_audio = RetroAudio {
                 rx: audio_rx,
                 current_frame: Vec::new().into_iter(),
-                sample_rate: sample_rate.clone(),
+                base_sample_rate: system_av_info.timing.sample_rate as f32,
+                speed_factor: Arc::clone(&speed_factor),
             };
 
             thread::spawn(move || {
@@ -129,8 +129,6 @@ fn run(
                 }
             });
 
-            let mut saved_state = None;
-
             loop {
                 core_host.run(core);
 
@@ -140,31 +138,6 @@ fn run(
                     }
 
                     last_sram_save = Instant::now();
-                }
-
-                if let Ok(command) = command_rx.try_recv() {
-                    match command {
-                        Command::SaveState => match core.state() {
-                            Ok(state) => saved_state = Some(state),
-                            Err(err) => eprintln!("{err:?}"),
-                        },
-                        Command::LoadState => {
-                            if let Some(state) = &saved_state {
-                                if let Err(err) = core.restore_state(state) {
-                                    eprintln!("{err:?}")
-                                }
-                            }
-                        }
-                        Command::ToggleTurbo => {
-                            speed_factor = match speed_factor {
-                                1 => 2,
-                                _ => 1,
-                            };
-
-                            *sample_rate.write().unwrap() =
-                                system_av_info.timing.sample_rate as u32 * speed_factor;
-                        }
-                    }
                 }
             }
 
@@ -189,9 +162,9 @@ struct ApeCallbacks {
     frame_tx: SyncSender<Option<Frame>>,
     audio_tx: SyncSender<Vec<i16>>,
     gilrs: Gilrs,
-    input_state: i16,
-    command_tx: SyncSender<Command>,
     egui_ctx: egui::Context,
+    buttons: EnumSet<input::Button>,
+    speed_factor: Arc<RwLock<f32>>,
 }
 
 impl Callbacks for ApeCallbacks {
@@ -232,67 +205,43 @@ impl Callbacks for ApeCallbacks {
                 _ => continue,
             };
 
-            // if release {
-            //     eprintln!("Released button {button:?}");
-            // } else {
-            //     eprintln!("Pressed button {button:?}");
-            // }
-
-            let button = match button {
-                Button::South => libretro_sys::DEVICE_ID_JOYPAD_A, // libretro_sys::DEVICE_ID_JOYPAD_B,
-                Button::West => libretro_sys::DEVICE_ID_JOYPAD_B, // libretro_sys::DEVICE_ID_JOYPAD_Y,
-                Button::East => continue, // libretro_sys::DEVICE_ID_JOYPAD_A,
-                Button::North => continue, // libretro_sys::DEVICE_ID_JOYPAD_X,
-                Button::C => continue,
-                Button::Z => continue,
-                Button::LeftTrigger => {
-                    // libretro_sys::DEVICE_ID_JOYPAD_L
-                    libretro_sys::DEVICE_ID_JOYPAD_X
-                    // self.command_tx.try_send(Command::LoadState).ok();
-                    // continue;
-                }
-                Button::LeftTrigger2 => libretro_sys::DEVICE_ID_JOYPAD_L2,
-                Button::RightTrigger => {
-                    // libretro_sys::DEVICE_ID_JOYPAD_R
-                    self.command_tx.try_send(Command::ToggleTurbo).ok();
-                    continue;
-                }
-                Button::RightTrigger2 => libretro_sys::DEVICE_ID_JOYPAD_R2,
-                Button::Select => libretro_sys::DEVICE_ID_JOYPAD_SELECT,
-                Button::Start => libretro_sys::DEVICE_ID_JOYPAD_START,
-                Button::Mode => continue,
-                Button::LeftThumb => libretro_sys::DEVICE_ID_JOYPAD_L3,
-                Button::RightThumb => libretro_sys::DEVICE_ID_JOYPAD_R3,
-                Button::DPadUp => libretro_sys::DEVICE_ID_JOYPAD_UP,
-                Button::DPadDown => libretro_sys::DEVICE_ID_JOYPAD_DOWN,
-                Button::DPadLeft => libretro_sys::DEVICE_ID_JOYPAD_LEFT,
-                Button::DPadRight => libretro_sys::DEVICE_ID_JOYPAD_RIGHT,
-                Button::Unknown => continue,
+            let Some(button) = input::Button::from_gilrs(button) else {
+                continue;
             };
 
+            // TODO: move overrides to config
+            let button = match button {
+                input::Button::B => input::Button::A,
+                input::Button::Y => input::Button::B,
+                input::Button::L => input::Button::X,
+                input::Button::A => continue,
+                input::Button::X => continue,
+                _ => button,
+            };
+
+            if button == input::Button::R {
+                if release {
+                    *self.speed_factor.write() = 1.;
+                } else {
+                    *self.speed_factor.write() = 2.;
+                }
+
+                continue;
+            }
+
             if release {
-                self.input_state &= !(1 << button);
+                self.buttons.remove(button);
             } else {
-                self.input_state |= 1 << button;
+                self.buttons.insert(button);
             }
         }
     }
 
-    fn input_state(&mut self, port: c_uint, device: c_uint, index: c_uint, id: c_uint) -> i16 {
-        if device != DEVICE_JOYPAD || port != 0 || index != 0 {
-            return 0;
-        }
-
-        self.input_state & (1 << id)
+    fn input_buttons(&self, port: c_uint) -> EnumSet<input::Button> {
+        self.buttons
     }
 
     fn can_dupe_frames(&mut self) -> bool {
         true
     }
-}
-
-enum Command {
-    SaveState,
-    LoadState,
-    ToggleTurbo,
 }

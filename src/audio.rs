@@ -1,12 +1,15 @@
 use std::sync::mpsc::Receiver;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use std::time::Duration;
 use std::vec;
+
+use parking_lot::RwLock;
 
 pub struct RetroAudio {
     pub rx: Receiver<Vec<i16>>,
     pub current_frame: vec::IntoIter<i16>,
-    pub sample_rate: Arc<RwLock<u32>>,
+    pub base_sample_rate: f32,
+    pub speed_factor: Arc<RwLock<f32>>,
 }
 
 impl rodio::Source for RetroAudio {
@@ -19,7 +22,9 @@ impl rodio::Source for RetroAudio {
     }
 
     fn sample_rate(&self) -> u32 {
-        *self.sample_rate.read().unwrap()
+        let speed_factor = *self.speed_factor.read();
+
+        (speed_factor * self.base_sample_rate) as u32
     }
 
     fn total_duration(&self) -> Option<Duration> {

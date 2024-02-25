@@ -19,12 +19,14 @@ custom_debug = "0.6.1"
 dotenv = "0.15.0"
 eframe = "0.26.2"
 egui = "0.26.2"
+enumset = "1.1.3"
 # xinput allows receiving input without window being focused
 gilrs = { version = "0.10.4", default-features = false, features = ["xinput"] }
 indexmap = "2.2.3"
 itertools = "0.12.1"
 libloading = "0.8.1"
 libretro-sys = "0.1.1"
+parking_lot = "0.12.1"
 rodio = { version = "0.17.3", default-features = false }
 strum = { version = "0.26.1", features = ["derive"] }
 
