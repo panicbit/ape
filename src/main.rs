@@ -69,6 +69,10 @@ fn run(
             .map_err(|err| anyhow!("{err}"))
             .context("failed to initialize gilrs")?;
 
+        for (id, gamepad) in gilrs.gamepads() {
+            println!("Gamepad #{id}: {:?}", gamepad.name());
+        }
+
         let sram_path = rom.with_extension("sram");
 
         let speed_factor = Arc::new(RwLock::new(1.0));
@@ -196,6 +200,11 @@ impl Callbacks for ApeCallbacks {
     fn input_poll(&mut self) {
         while let Some(event) = self.gilrs.next_event() {
             let mut release = false;
+
+            if usize::from(event.id) != 0 {
+                continue;
+            }
+
             let button = match event.event {
                 gilrs::EventType::ButtonPressed(button, _) => button,
                 gilrs::EventType::ButtonReleased(button, _) => {
