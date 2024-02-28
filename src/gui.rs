@@ -91,15 +91,15 @@ impl eframe::App for Gui {
             });
         }
 
-        TopBottomPanel::bottom("bottom").show(ctx, |ui| {
-            let rupees = self
-                .core_handle
-                .run(|core| core.get_memory(0xDB5D, 2))
-                .unwrap();
+        // TopBottomPanel::bottom("bottom").show(ctx, |ui| {
+        //     let rupees = self
+        //         .core_handle
+        //         .run(|core| core.get_memory(0xDB5D, 2))
+        //         .unwrap();
 
-            let label = format!("Rupee count: {:X}{:02X}", rupees[0], rupees[1]);
-            ui.heading(label);
-        });
+        //     let label = format!("Rupee count: {:X}{:02X}", rupees[0], rupees[1]);
+        //     ui.heading(label);
+        // });
 
         let frame = egui::Frame::default();
         CentralPanel::default().frame(frame).show(ctx, |ui| {
