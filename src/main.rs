@@ -218,6 +218,14 @@ impl Callbacks for ApeCallbacks {
                 continue;
             };
 
+            match button {
+                input::Button::Down => self.buttons -= input::Button::Up,
+                input::Button::Up => self.buttons -= input::Button::Down,
+                input::Button::Left => self.buttons -= input::Button::Right,
+                input::Button::Right => self.buttons -= input::Button::Left,
+                _ => {}
+            };
+
             // TODO: move overrides to config
             let button = match button {
                 input::Button::B => input::Button::A,
