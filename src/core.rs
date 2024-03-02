@@ -16,6 +16,8 @@ use libretro_sys::GameGeometry;
 use libretro_sys::GameInfo;
 use libretro_sys::SystemAvInfo;
 use libretro_sys::SystemTiming;
+use sha1::Digest;
+use sha1::Sha1;
 
 use self::api::Api;
 
@@ -152,6 +154,14 @@ impl Core {
         }
     }
 
+    pub fn rom<R>(&self, f: impl FnOnce(&[u8]) -> R) -> R {
+        STATE.with_borrow(|state| f(&state.rom))
+    }
+
+    pub fn get_sha1_romhash(&self) -> String {
+        STATE.with_borrow(|state| state.sha1_romhash.clone())
+    }
+
     pub fn get_memory(&self, address: usize, max_len: usize) -> Vec<u8> {
         STATE.with_borrow(|state| unsafe {
             state
@@ -259,6 +269,13 @@ impl Core {
         };
 
         let load_game_successful = (self.api.retro_load_game)(&game_info);
+        STATE.with_borrow_mut(|state| {
+            let sha1_romhash = Sha1::digest(&rom);
+            let sha1_romhash = hex::encode(sha1_romhash);
+
+            state.rom = rom;
+            state.sha1_romhash = sha1_romhash;
+        });
 
         if !load_game_successful {
             bail!("Failed to load game");

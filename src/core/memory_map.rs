@@ -74,10 +74,10 @@ impl Descriptor {
     }
 
     pub fn contains_address(&self, addr: usize) -> bool {
-        if self.select != 0 {
-            // TODO: implement select != 0 case
-            return false;
-        }
+        // if self.select != 0 {
+        //     // TODO: implement select != 0 case
+        //     return false;
+        // }
 
         self.start <= addr && addr < self.end()
     }

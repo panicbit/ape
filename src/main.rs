@@ -22,6 +22,7 @@ use crate::audio::RetroAudio;
 use crate::core::{Callbacks, Core};
 use crate::video::Frame;
 
+mod ap_remote;
 mod audio;
 pub(crate) mod core;
 mod environment;
@@ -109,6 +110,7 @@ fn run(
                 }
             }
 
+            ap_remote::start(core_host.handle());
             remote::start(core_host.handle());
 
             let system_av_info = core.get_system_av_info();

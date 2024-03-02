@@ -12,6 +12,8 @@ pub struct State {
     pub is_core_loaded: bool,
     pub pixel_format: PixelFormat,
     pub memory_map: MemoryMap,
+    pub rom: Vec<u8>,
+    pub sha1_romhash: String,
 }
 
 impl State {
@@ -20,6 +22,8 @@ impl State {
             is_core_loaded: false,
             pixel_format: PixelFormat::ARGB1555,
             memory_map: MemoryMap::empty(),
+            rom: Vec::new(),
+            sha1_romhash: String::new(),
         }
     }
 }
