@@ -18,6 +18,7 @@ pub fn core_name_to_library_name(core_name: &str) -> String {
     format!("{core_name}_libretro.{}", std::env::consts::DLL_EXTENSION)
 }
 
+// TODO: use `dirs` crate or similar
 pub fn cores_directory() -> PathBuf {
     PathBuf::from("./cores/")
 }

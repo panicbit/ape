@@ -16,8 +16,6 @@ use egui::{
 use crate::core;
 use crate::video::Frame;
 
-use super::Cli;
-
 mod input;
 
 const CORE_TEXTURE_OPTIONS: TextureOptions = TextureOptions {
