@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 use std::time::Duration;
 
@@ -25,7 +26,7 @@ const CORE_TEXTURE_OPTIONS: TextureOptions = TextureOptions {
     wrap_mode: TextureWrapMode::ClampToEdge,
 };
 
-pub fn run(cli: Cli) -> Result<()> {
+pub fn run(core: PathBuf, rom: PathBuf) -> Result<()> {
     let native_options = eframe::NativeOptions {
         vsync: true,
         ..<_>::default()
@@ -34,7 +35,7 @@ pub fn run(cli: Cli) -> Result<()> {
     eframe::run_native(
         "APE",
         native_options,
-        Box::new(move |cc| Box::new(Gui::new(cc, cli))),
+        Box::new(move |cc| Box::new(Gui::new(cc, core, rom))),
     )
     .map_err(|err| anyhow!("{err}"))
     .context("failed to run eframe")?;
@@ -52,14 +53,14 @@ pub struct Gui {
 }
 
 impl Gui {
-    fn new(cc: &CreationContext, cli: Cli) -> Self {
+    fn new(cc: &CreationContext, core: PathBuf, rom: PathBuf) -> Self {
         let texture_name = "Core";
         let image = ImageData::from(ColorImage::example());
         let core_texture = cc
             .egui_ctx
             .load_texture(texture_name, image, CORE_TEXTURE_OPTIONS);
 
-        let (frame_rx, core_handle) = super::run(&cli.core, &cli.rom, cc.egui_ctx.clone()).unwrap();
+        let (frame_rx, core_handle) = super::run(core, rom, cc.egui_ctx.clone()).unwrap();
 
         Self {
             core_texture,

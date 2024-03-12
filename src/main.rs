@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::{io, thread, vec};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 
 use clap::Parser;
 
@@ -24,17 +24,19 @@ use crate::video::Frame;
 
 mod ap_remote;
 mod audio;
+mod buildbot;
 pub(crate) mod core;
 mod environment;
 mod gui;
 mod input;
 mod remote;
+mod util;
 mod video;
 
 #[derive(clap::Parser)]
 struct Cli {
     #[clap(long, env = "APE_CORE")]
-    core: PathBuf,
+    core: Option<PathBuf>,
     #[clap(long, env = "APE_ROM")]
     rom: PathBuf,
 }
@@ -43,8 +45,15 @@ fn main() -> Result<()> {
     dotenv::dotenv().ok();
 
     let cli = Cli::parse();
+    let rom = cli.rom;
+    let core = match cli.core {
+        Some(core) => core,
+        None => {
+            util::find_and_potentially_fetch_core_for_rom(&rom).context("failed to resolve core")?
+        }
+    };
 
-    gui::run(cli).context("failed to run gui")?;
+    gui::run(core, rom).context("failed to run gui")?;
 
     Ok(())
 }
