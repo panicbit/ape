@@ -7,9 +7,7 @@ use anyhow::{Context, Result};
 use reqwest::Url;
 use zip::ZipArchive;
 
-use crate::util::{self, core_name_to_library_name, cores_directory};
-
-fn buildbot_url_for_core(core_name: &str) -> Option<Url> {
+fn buildbot_url_for_library(library_name: &str) -> Option<Url> {
     let mut url = Url::parse("https://buildbot.libretro.com/nightly").unwrap();
     let mut path = url.path_segments_mut().unwrap();
 
@@ -45,7 +43,6 @@ fn buildbot_url_for_core(core_name: &str) -> Option<Url> {
         _ => return None,
     }
 
-    let library_name = util::core_name_to_library_name(core_name);
     let zip_name = format!("{library_name}.zip");
 
     path.extend(["latest", &zip_name]);
@@ -55,10 +52,9 @@ fn buildbot_url_for_core(core_name: &str) -> Option<Url> {
     Some(url)
 }
 
-fn download_core(core_name: &str) -> Result<Vec<u8>> {
-    let library_name = util::core_name_to_library_name(core_name);
-    let url =
-        buildbot_url_for_core(core_name).context("Buildbot url for current platform is unknown")?;
+fn download_library(library_name: &str) -> Result<Vec<u8>> {
+    let url = buildbot_url_for_library(library_name)
+        .context("Buildbot url for current platform is unknown")?;
 
     eprintln!("Downloading core from {url}");
 
@@ -68,9 +64,7 @@ fn download_core(core_name: &str) -> Result<Vec<u8>> {
     let zip = response.bytes()?;
     let zip = Cursor::new(zip);
     let mut zip = ZipArchive::new(zip)?;
-    let mut file = zip
-        .by_name(&library_name)
-        .context("core not found in zip")?;
+    let mut file = zip.by_name(library_name).context("core not found in zip")?;
     let mut core = Vec::with_capacity(file.size() as usize);
 
     file.read_to_end(&mut core)?;
@@ -78,16 +72,10 @@ fn download_core(core_name: &str) -> Result<Vec<u8>> {
     Ok(core)
 }
 
-fn download_core_to(core_name: &str, path: &Path) -> Result<()> {
-    let core = download_core(core_name)?;
-    let library_name = &core_name_to_library_name(core_name);
-    let library_path = cores_directory().join(library_name);
+pub fn download_core_to(library_name: &str, path: &Path) -> Result<()> {
+    let core = download_library(library_name)?;
 
-    fs::write(library_path, core).with_context(|| format!("failed to write core to `{path:?}`"))?;
+    fs::write(path, core).with_context(|| format!("failed to write core to `{path:?}`"))?;
 
     Ok(())
-}
-
-pub fn download_core_to_core_directory(core_name: &str) -> Result<()> {
-    download_core_to(core_name, &cores_directory())
 }
